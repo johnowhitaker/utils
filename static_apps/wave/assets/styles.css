@@ -1,0 +1,84 @@
+body {
+    margin: 0;
+    background-color: #121212;
+    color: #FFFFFF;
+    font-family: Arial, sans-serif;
+  }
+  
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+  
+  h1 {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  
+  #video-container {
+    position: relative;
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  
+  #webcam, #overlay {
+    width: 100%;
+    height: auto;
+  }
+  
+  .controls {
+    margin-top: 20px;
+    text-align: center;
+  }
+  
+  #restingPositionBtn {
+    padding: 10px 20px;
+    margin-bottom: 20px;
+    background-color: #1DB954;
+    border: none;
+    color: #FFFFFF;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  
+  #restingPositionBtn:hover {
+    background-color: #1ED760;
+  }
+  
+  #countdown {
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+  
+  .levels {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+  }
+  
+  .level {
+    text-align: center;
+  }
+  
+  .level-bar {
+    width: 40px;
+    height: 200px;
+    background-color: #555;
+    margin-top: 10px;
+    position: relative;
+    overflow: hidden;
+    border-radius: 5px;
+  }
+  
+  .level-bar::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: var(--level, 0%);
+    background-color: #1DB954;
+    transition: height 0.1s ease-out;
+  }
+  
