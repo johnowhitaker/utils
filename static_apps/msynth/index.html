@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Web MIDI Synth</title>
+    <style>
+        /* Futuristic styling */
+        body {
+            background-color: #000;
+            color: #0ff;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+        }
+        h1 {
+            margin-top: 20px;
+            text-shadow: 0 0 10px #0ff;
+        }
+        #controls p {
+            font-size: 1.2em;
+        }
+        canvas {
+            border: 1px solid #0ff;
+            box-shadow: 0 0 10px #0ff;
+            margin: 10px auto;
+            display: block;
+        }
+        .visualizer {
+            width: 80%;
+            height: 200px;
+        }
+        #midiSelect {
+            margin: 10px;
+            padding: 5px;
+            font-size: 1em;
+            background-color: #000;
+            color: #0ff;
+            border: 1px solid #0ff;
+            box-shadow: 0 0 10px #0ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Web MIDI Synth</h1>
+    <div id="controls">
+        <p>Use your QWERTY keyboard or connect a MIDI device.</p>
+        <select id="midiSelect">
+            <option value="">Select MIDI Input</option>
+        </select>
+    </div>
+    <canvas id="ccVisualizer" class="visualizer"></canvas>
+    <canvas id="soundVisualizer" class="visualizer"></canvas>
+    <script>
+        // Check for Web MIDI API support
+        if (navigator.requestMIDIAccess) {
+            navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+        } else {
+            console.error('Web MIDI API not supported in this browser.');
+        }
+
+        // MIDI Access
+        let midiAccess = null;
+        let midiInput = null;
+        let midiSelect = document.getElementById('midiSelect');
+
+        function onMIDISuccess(access) {
+            console.log('MIDI Access Object', access);
+            midiAccess = access;
+            listMIDIInputs(midiAccess.inputs);
+            midiAccess.onstatechange = function(e) {
+                console.log(e.port.name, e.port.manufacturer, e.port.state);
+                listMIDIInputs(midiAccess.inputs);
+            };
+        }
+
+        function onMIDIFailure() {
+            console.error('Could not access your MIDI devices.');
+        }
+
+        // List MIDI inputs in the dropdown
+        function listMIDIInputs(inputs) {
+            midiSelect.innerHTML = '<option value="">Select MIDI Input</option>';
+            inputs.forEach(function(input) {
+                let option = document.createElement('option');
+                option.text = input.name;
+                option.value = input.id;
+                midiSelect.add(option);
+            });
+        }
+
+        // Handle MIDI input selection
+        midiSelect.addEventListener('change', function() {
+            if (midiInput) {
+                midiInput.onmidimessage = null; // Disconnect previous MIDI input
+            }
+            let selectedId = midiSelect.value;
+            if (selectedId) {
+                midiInput = midiAccess.inputs.get(selectedId);
+                if (midiInput) {
+                    midiInput.onmidimessage = getMIDIMessage;
+                    console.log('MIDI input selected:', midiInput.name);
+                }
+            }
+        });
+
+        // Variables for CC values
+        let cc111Value = 0;
+        let cc113Value = 0;
+
+        // Web Audio API setup
+        let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let analyser = audioContext.createAnalyser();
+        let activeNotes = {};
+
+        // Key to MIDI note mapping
+        const keyNoteMap = {
+            'a': 60, // C4
+            'w': 61, // C#4
+            's': 62, // D4
+            'e': 63, // D#4
+            'd': 64, // E4
+            'f': 65, // F4
+            't': 66, // F#4
+            'g': 67, // G4
+            'y': 68, // G#4
+            'h': 69, // A4
+            'u': 70, // A#4
+            'j': 71, // B4
+            'k': 72, // C5
+            'o': 73, // C#5
+            'l': 74, // D5
+            'p': 75, // D#5
+            ';': 76, // E5
+        };
+
+        // Event listeners for keyboard input
+        document.addEventListener('keydown', function(e) {
+            let key = e.key.toLowerCase();
+            if (keyNoteMap[key] && !activeNotes[key]) {
+                playNoteFromKey(key);
+            }
+        });
+
+        document.addEventListener('keyup', function(e) {
+            let key = e.key.toLowerCase();
+            if (keyNoteMap[key] && activeNotes[key]) {
+                stopNoteFromKey(key);
+            }
+        });
+
+        // Play note from key press
+        function playNoteFromKey(key) {
+            let noteNumber = keyNoteMap[key];
+            playNote(noteNumber, key);
+        }
+
+        // Stop note from key release
+        function stopNoteFromKey(key) {
+            stopNoteByKey(key);
+        }
+
+        // Play a note
+        function playNote(noteNumber, key = null) {
+            let frequency = midiNoteToFrequency(noteNumber);
+            let oscillator = audioContext.createOscillator();
+            let gainNode = audioContext.createGain();
+            let filterNode = audioContext.createBiquadFilter();
+            let filterLFO = audioContext.createOscillator();
+            let filterLFODepth = audioContext.createGain();
+            let distortion = audioContext.createWaveShaper();
+
+            oscillator.frequency.value = frequency;
+            oscillator.type = 'sawtooth'; // Waveform type
+
+            // Setup filter LFO (filter modulation)
+            filterLFO.frequency.value = 5; // LFO rate
+            filterLFODepth.gain.value = 0; // Initial depth, will be adjusted
+
+            filterLFO.connect(filterLFODepth);
+            filterLFODepth.connect(filterNode.frequency);
+
+            filterNode.type = 'lowpass';
+            filterNode.frequency.value = 1000; // Base cutoff frequency
+
+            // Setup distortion
+            setDistortionCurve(distortion, cc113Value);
+
+            oscillator.connect(filterNode);
+            filterNode.connect(distortion);
+            distortion.connect(gainNode);
+            gainNode.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            oscillator.start();
+            filterLFO.start();
+
+            if (key) {
+                activeNotes[key] = { oscillator, gainNode, filterLFO, filterLFODepth, distortion };
+            } else {
+                activeNotes[noteNumber] = { oscillator, gainNode, filterLFO, filterLFODepth, distortion };
+            }
+        }
+
+        // Stop note by key
+        function stopNoteByKey(key) {
+            let note = activeNotes[key];
+            if (note) {
+                note.gainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.01);
+                note.oscillator.stop(audioContext.currentTime + 0.02);
+                note.filterLFO.stop(audioContext.currentTime + 0.02);
+                delete activeNotes[key];
+            }
+        }
+
+        // Stop note by MIDI note number
+        function stopNoteByNumber(noteNumber) {
+            let note = activeNotes[noteNumber];
+            if (note) {
+                note.gainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.01);
+                note.oscillator.stop(audioContext.currentTime + 0.02);
+                note.filterLFO.stop(audioContext.currentTime + 0.02);
+                delete activeNotes[noteNumber];
+            }
+        }
+
+        // MIDI message handling
+        function getMIDIMessage(message) {
+            let data = message.data;
+            let type = data[0] & 0xf0; // Masking channel bits
+            let noteNumber = data[1];
+            let velocity = data[2];
+
+            // Note On message
+            if (type === 144) {
+                if (velocity > 0) {
+                    playNote(noteNumber);
+                } else {
+                    stopNoteByNumber(noteNumber);
+                }
+            }
+            // Note Off message
+            if (type === 128) {
+                stopNoteByNumber(noteNumber);
+            }
+            // Control Change message
+            if (type === 176) {
+                let controllerNumber = data[1];
+                let controllerValue = data[2];
+                handleControlChange(controllerNumber, controllerValue);
+            }
+        }
+
+        // Handle Control Change messages
+        function handleControlChange(controllerNumber, value) {
+            if (controllerNumber === 111) {
+                cc111Value = value / 127; // Normalize between 0 and 1
+                updateFilterLFODepth();
+                updateCCVisualizer();
+            }
+            if (controllerNumber === 113) {
+                cc113Value = value / 127; // Normalize between 0 and 1
+                updateDistortionCurve();
+                updateCCVisualizer();
+            }
+        }
+
+        // Update filter LFO depth in real-time
+        function updateFilterLFODepth() {
+            let depth = 0;
+            let threshold = 20 / 127; // Threshold normalized value
+            if (cc111Value > threshold) {
+                let normalizedValue = (cc111Value - threshold) / (1 - threshold); // Normalize between 0 and 1
+                depth = normalizedValue * 1000; // Max depth
+            }
+            for (let key in activeNotes) {
+                let note = activeNotes[key];
+                if (note.filterLFODepth) {
+                    note.filterLFODepth.gain.setTargetAtTime(depth, audioContext.currentTime, 0.01);
+                }
+            }
+        }
+
+        // Set distortion curve based on CC 113
+        function setDistortionCurve(distortion, amount) {
+            let k = amount * 50; // Adjust distortion intensity
+            let n_samples = 44100;
+            let curve = new Float32Array(n_samples);
+            let deg = Math.PI / 180;
+            for (let i = 0; i < n_samples; ++i) {
+                let x = i * 2 / n_samples - 1;
+                curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+            }
+            distortion.curve = curve;
+            distortion.oversample = '4x';
+        }
+
+        // Update distortion curve in real-time
+        function updateDistortionCurve() {
+            for (let key in activeNotes) {
+                let note = activeNotes[key];
+                if (note.distortion) {
+                    setDistortionCurve(note.distortion, cc113Value);
+                }
+            }
+        }
+
+        // MIDI note to frequency conversion
+        function midiNoteToFrequency(note) {
+            return 440 * Math.pow(2, (note - 69) / 12);
+        }
+
+        // CC Visualizer
+        function updateCCVisualizer() {
+            let canvas = document.getElementById('ccVisualizer');
+            let ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth * 0.8;
+            canvas.height = 200;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw CC111 value
+            ctx.fillStyle = '#0ff';
+            ctx.fillRect(0, 0, canvas.width * cc111Value, canvas.height / 2);
+
+            // Draw CC113 value
+            ctx.fillStyle = '#f0f';
+            ctx.fillRect(0, canvas.height / 2, canvas.width * cc113Value, canvas.height / 2);
+        }
+
+        updateCCVisualizer();
+
+        // Sound Visualizer with Zero-Crossing
+        function visualizeSound() {
+            let canvas = document.getElementById('soundVisualizer');
+            let ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth * 0.8;
+            canvas.height = 200;
+
+            analyser.fftSize = 2048;
+            let bufferLength = analyser.fftSize;
+            let dataArray = new Uint8Array(bufferLength);
+
+            function draw() {
+                requestAnimationFrame(draw);
+
+                analyser.getByteTimeDomainData(dataArray);
+
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#0f0';
+
+                ctx.beginPath();
+
+                // Find the first zero-crossing point
+                let zeroCrossing = findFirstPositiveZeroCrossing(dataArray, bufferLength);
+
+                let sliceWidth = canvas.width / (bufferLength - zeroCrossing);
+                let x = 0;
+
+                for(let i = zeroCrossing; i < bufferLength; i++) {
+                    let v = (dataArray[i] - 128) / 128.0; // Normalize between -1 and 1
+                    let y = v * canvas.height / 2 + canvas.height / 2;
+
+                    if(i === zeroCrossing) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+
+                    x += sliceWidth;
+                }
+
+                ctx.stroke();
+            }
+
+            // Function to find the first positive zero-crossing
+            function findFirstPositiveZeroCrossing(dataArray, bufferLength) {
+                let i = 0;
+                let lastValue = dataArray[0] - 128;
+                for (; i < bufferLength; i++) {
+                    let currentValue = dataArray[i] - 128;
+                    if (lastValue < 0 && currentValue >= 0) {
+                        break;
+                    }
+                    lastValue = currentValue;
+                }
+                return i;
+            }
+
+            draw();
+        }
+
+        visualizeSound();
+    </script>
+</body>
+</html>
