@@ -1,14 +1,23 @@
 from fasthtml.common import *
-# from fasthtml_apps.about import ar as about_api_router
 
 app = FastHTML(hdrs=(picolink))
-# about_api_router.to_app(app)
 
 @app.get("/")
 def home():
     return Titled("Hello World", Main(
-        P("This is a paragraph"),
-        A("See About Page", href="/about"),
+        P("My tools:"),
+        Ul( # alebrije  audio_viz  facewave  gravy  msynth  squirrel  synth
+            Li(A("Mini Synth", href="/synth"), " - A tiny little synth, made to jam along with MusicFX DJ"),
+            Li(A("Audio Viz", href="/audio_viz"), " - Visualize audio in the browser like old school media players"),
+            Li(A("FaceWave", href="/facewave"), " - control MIDI with face + hands!"),
+            Li(A("MSynth", href="/msynth"), " - Quick way to test FaceWave - a simple synth that takes midi CC in. You will also need loopMIDI"),
+        ),
+        P("Misc ones:"),
+        Ul(
+            Li(A("Alebrije", href="/alebrije"), " - a custom rubric for an art assignment E made"),
+            Li(A("Gravy", href="/gravy"), " - a test artifact"),
+            Li(A("Squirrel", href="/squirrel"), " - another test artifact"),
+        ),
         cls="container"
     ))
 
