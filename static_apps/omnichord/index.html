@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta property="og:url" content="https://omnichord.jake.fun">
+    <meta property="og:title" content="omnichord.jake.fun">
+    <meta property="og:description" content="an omnichord in a web browser.">
+    <meta property="og:image" content="https://omnichord.jake.fun/image.png">
+    <meta property="og:image:url" content="https://omnichord.jake.fun/image.png">
+    <link rel="apple-touch-icon" sizes="76x76" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/icon.png">
+    <title>Omnichord</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        touch-action: none;
+        -moz-user-select: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      :root {
+        --font-family: "Andale Mono", "Trebuchet MS", "Lucida Sans Unicode",
+          monospace;
+        --font-size: max(min(1.8vw, 1.8vh), 1rem);
+        --harp-height: 100%;
+        --harp-left: 0;
+        --harp-top: 0;
+        --harp-width: 100%;
+      }
+
+      body {
+        background: #000;
+        font-family: var(--font-family);
+        margin: 0;
+      }
+      body.resizing > * {
+        opacity: 0;
+      }
+      html,
+      body,
+      canvas {
+        height: 100%;
+        width: 100%;
+      }
+      canvas {
+        height: 100%;
+        left: 0;
+        position: fixed;
+        top: 0;
+        width: 100%;
+      }
+      nav a,
+      nav button {
+        align-items: center;
+        appearance: none;
+        background: transparent;
+        border-radius: 0;
+        border: none;
+        box-sizing: border-box;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        font-family: var(--font-family);
+        font-size: var(--font-size);
+        font-weight: bold;
+        justify-content: center;
+        line-height: 1;
+        padding: calc(var(--font-size) * 0.25) calc(var(--font-size) * 0.5);
+        text-decoration: none;
+        text-transform: lowercase;
+      }
+      nav button:not(.active) {
+        text-decoration: line-through;
+      }
+      nav {
+        align-content: center;
+        align-items: center;
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+        flex-wrap: wrap;
+        height: var(--harp-height);
+        left: var(--harp-left);
+        position: fixed;
+        top: var(--harp-top);
+        width: var(--harp-width);
+        z-index: 999;
+      }
+      nav:not(.config) button {
+        display: none;
+      }
+      nav > * {
+        margin: calc(var(--font-size) * 0.0625);
+      }
+      #config-link {
+        font-style: italic;
+      }
+      #config-link[href="#"] {
+        margin-top: var(--font-size);
+      }
+      @media screen and (orientation: portrait) {
+        nav {
+          flex-direction: row;
+        }
+        #config-link {
+          margin-top: 0;
+        }
+      }
+      #config-link,
+      #config-link:hover,
+      #config-link:active,
+      #config-link:link,
+      #config-link:visited,
+      #config-link:focus-visible {
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <nav id="config">
+      <button id="tempo">Tempo</button>
+      <button id="labels">Labels</button>
+      <button id="fixed">Fixed</button>
+      <button id="fx">FX</button>
+      <button id="invert" class="active">Invert</button>
+      <a id="config-link" href="#config">Config</a>
+    </nav>
+    <canvas></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.36/Tone.min.js"></script>
+    <script type="module" src="/assets/omnichord/chords.js"></script>
+    <script type="module" src="/assets/omnichord/controller.js"></script>
+    <script type="module" src="/assets/omnichord/sounds.js"></script>
+    <script type="module" src="/assets/omnichord/touch.js"></script>
+    <script type="module" src="/assets/omnichord/app.js"></script>
+  </body>
+</html>
