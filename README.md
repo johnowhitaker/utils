@@ -3,7 +3,6 @@ Little utilities, mostly AI-made, for my own use.
 
 # Adding Apps
 
-- FastHTML apps go in the `fasthtml_apps` folder. Use an APIRouter for the routes. Use a 'root_path' where possible.
 - Standalone HTML files go in their own folder in `static_apps`, as do claude artifacts exported with the tool
 
 
