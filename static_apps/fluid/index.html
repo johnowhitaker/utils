@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>2D FLIP Fluid with Dynamic Obstacle</title>
+  <style>
+    body {
+      margin: 0;
+      background: #232323;
+      color: #eee;
+      font-family: sans-serif;
+    }
+    #gui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 4px;
+    }
+    label {
+      font-size: 14px;
+      margin-right: 5px;
+    }
+    input {
+      width: 80px;
+      margin-bottom: 5px;
+    }
+    #canvasContainer {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100vw;
+      height: 100vh;
+    }
+    canvas {
+      background: #000;
+      display: block;
+      border: 1px solid #444;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+
+<div id="gui">
+  <div>
+    <label>Gravity:</label>
+    <input type="number" step="0.1" id="gravityInput" value="30">
+  </div>
+  <div>
+    <label>FLIP Ratio:</label>
+    <input type="number" step="0.1" min="0" max="1" id="flipRatioInput" value="0.9">
+  </div>
+  <div>
+    <label>Iterations:</label>
+    <input type="number" step="1" min="1" id="iterationsInput" value="20">
+  </div>
+  <div>
+    <label>Time Step:</label>
+    <input type="number" step="0.001" min="0.001" id="dtInput" value="0.01">
+  </div>
+  <button id="resetBtn">Reset Simulation</button>
+</div>
+
+<div id="canvasContainer">
+  <canvas id="flipCanvas" width="600" height="600"></canvas>
+</div>
+
+<script>
+/*
+  2D FLIP FLUID SIMULATION with Dynamic Solid Circle Obstacle
+  -----------------------------------------------------------
+  CHANGES vs. previous version:
+    - Slightly lowered gravity & dt for better stability.
+    - Over-relaxation factor is gentler (1.7) to reduce blow-ups.
+    - “No-slip” boundary: velocities along the domain edges are forced
+      to zero to prevent fluid from "sticking" or "exploding."
+    - Dynamic circle obstacle: click + drag to move a circle
+      that sets cells to solid while mouse is down. Release = remove.
+*/
+
+// ---------------------------------------------------------
+// SIMULATION SETTINGS
+// ---------------------------------------------------------
+const GRID_SIZE_X = 60;
+const GRID_SIZE_Y = 60;
+const CELL_SIZE   = 10; // in pixels
+
+// For the dynamic circle
+const RADIUS_SOLID_CIRCLE = 4; // in grid units
+
+let Nx = GRID_SIZE_X, Ny = GRID_SIZE_Y;
+let h  = 1.0;  // "world" cell size
+
+let canvas, ctx;
+let dt         = 0.01;
+let gravity    = 30.0;
+let flipRatio  = 0.9;
+let iterations = 20;
+
+// Over-relaxation factor
+let overRelaxation = 1.9;
+
+// Particle data
+let particles = [];
+
+// Staggered grid arrays
+let U, V;         // current velocities
+let Uprev, Vprev; // old velocities
+
+// Pressure and divergence
+let pressure, divergence;
+
+// Solid mask (0 = solid, 1 = fluid/air). We'll also have a
+// "dynamicSolidMask" for the obstacle circle that we combine each frame.
+let solidMask, dynamicSolidMask;
+
+// Particle density
+let particleDensity;
+
+// Mouse interaction
+let mouseDown = false;
+let mouseX = 0, mouseY = 0;
+
+// ---------------------------------------------------------
+// INITIALIZE
+// ---------------------------------------------------------
+function init() {
+  canvas  = document.getElementById("flipCanvas");
+  ctx     = canvas.getContext("2d");
+
+  Nx = GRID_SIZE_X;
+  Ny = GRID_SIZE_Y;
+
+  // Create or reset the velocity arrays
+  U = createArray2D(Nx+1, Ny,   0);
+  V = createArray2D(Nx,   Ny+1, 0);
+
+  Uprev = createArray2D(Nx+1, Ny,   0);
+  Vprev = createArray2D(Nx,   Ny+1, 0);
+
+  pressure   = createArray2D(Nx, Ny, 0);
+  divergence = createArray2D(Nx, Ny, 0);
+
+  solidMask        = createArray2D(Nx, Ny, 1); // 1 => water/air by default
+  dynamicSolidMask = createArray2D(Nx, Ny, 0); // updated each frame
+
+  particleDensity = createArray2D(Nx, Ny, 0);
+
+  // Mark domain boundary as solid
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      if (i === 0 || j === 0 || i === Nx-1 || j === Ny-1) {
+        solidMask[i][j] = 0; // boundary => solid
+      } else {
+        solidMask[i][j] = 1; // interior
+      }
+    }
+  }
+
+  // Create a block of water particles in the top half
+  particles = [];
+  let startX = Nx * 0.3;
+  let endX   = Nx * 0.7;
+  let startY = Ny * 0.2;
+  let endY   = Ny * 0.5;
+  for (let j = startY; j < endY; j++) {
+    for (let i = startX; i < endX; i++) {
+      // ~3 random particles per cell
+      for (let n = 0; n < 4; n++) {
+        let px = (i + 0.5 + 0.2*(Math.random()-0.5)) * h;
+        let py = (j + 0.5 + 0.2*(Math.random()-0.5)) * h;
+        particles.push({
+          x: px,
+          y: py,
+          vx: 0,
+          vy: 0
+        });
+      }
+    }
+  }
+    // ---------------------------------------------------------
+    // MOUSE EVENTS
+    // ---------------------------------------------------------
+    canvas.addEventListener("mousedown", (e) => {
+    mouseDown = true;
+    updateMousePos(e);
+    });
+    canvas.addEventListener("mousemove", (e) => {
+    if (mouseDown) {
+        updateMousePos(e);
+    }
+    });
+    canvas.addEventListener("mouseup", () => {
+    mouseDown = false;
+    });
+
+    function updateMousePos(e) {
+    let rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+    // convert to grid coords
+    mouseX = mx / CELL_SIZE;
+    mouseY = my / CELL_SIZE;
+    }
+}
+
+function createArray2D(nx, ny, val) {
+  let arr = new Array(nx);
+  for (let i = 0; i < nx; i++) {
+    arr[i] = new Array(ny);
+    for (let j = 0; j < ny; j++) {
+      arr[i][j] = val;
+    }
+  }
+  return arr;
+}
+
+// ---------------------------------------------------------
+// MAIN LOOP
+// ---------------------------------------------------------
+function update() {
+  // Read GUI parameters
+  gravity    = parseFloat(document.getElementById("gravityInput").value);
+  flipRatio  = parseFloat(document.getElementById("flipRatioInput").value);
+  iterations = parseInt(document.getElementById("iterationsInput").value);
+  dt         = parseFloat(document.getElementById("dtInput").value);
+
+  // 1) Particle free-fall update
+  for (let p of particles) {
+    p.vy += gravity * dt;  // add gravity
+    p.x  += p.vx * dt;
+    p.y  += p.vy * dt;
+  }
+
+  // 2) Clamp particles in domain
+  for (let p of particles) {
+    if (p.x < 1)     { p.x = 1;     p.vx = 0; }
+    if (p.x > Nx-1)  { p.x = Nx-1;  p.vx = 0; }
+    if (p.y < 1)     { p.y = 1;     p.vy = 0; }
+    if (p.y > Ny-1)  { p.y = Ny-1;  p.vy = 0; }
+  }
+
+  // 3) Clear out old velocities
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx+1; i++) {
+      Uprev[i][j] = U[i][j];
+      U[i][j]     = 0;
+    }
+  }
+  for (let j = 0; j < Ny+1; j++) {
+    for (let i = 0; i < Nx; i++) {
+      Vprev[i][j] = V[i][j];
+      V[i][j]     = 0;
+    }
+  }
+
+  // 4) Transfer velocities from particles -> grid (PIC style)
+  let Uweight = createArray2D(Nx+1, Ny,   0);
+  let Vweight = createArray2D(Nx,   Ny+1, 0);
+
+  for (let p of particles) {
+    let px = p.x;
+    let py = p.y;
+
+    {
+      let i0 = Math.floor(px); i0 = clamp(i0, 0, Nx-1);
+      let i1 = i0+1;           i1 = clamp(i1, 0, Nx);
+      let j0 = Math.floor(py); j0 = clamp(j0, 0, Ny-1);
+      let j1 = j0+1;           j1 = clamp(j1, 0, Ny-1);
+
+      let dx = px - i0;
+      let dy = py - j0;
+
+      let w00 = (1-dx)*(1-dy);
+      let w10 = dx*(1-dy);
+      let w01 = (1-dx)*dy;
+      let w11 = dx*dy;
+
+      U[i0][j0]     += p.vx*w00; 
+      U[i1][j0]     += p.vx*w10; 
+      U[i0][j1]     += p.vx*w01; 
+      U[i1][j1]     += p.vx*w11;
+
+      Uweight[i0][j0] += w00;
+      Uweight[i1][j0] += w10;
+      Uweight[i0][j1] += w01;
+      Uweight[i1][j1] += w11;
+    }
+    {
+      let i0 = Math.floor(px); i0 = clamp(i0, 0, Nx-1);
+      let i1 = i0+1;           i1 = clamp(i1, 0, Nx-1);
+      let j0 = Math.floor(py); j0 = clamp(j0, 0, Ny-1);
+      let j1 = j0+1;           j1 = clamp(j1, 0, Ny);
+
+      let dx = px - i0;
+      let dy = py - j0;
+
+      let w00 = (1-dx)*(1-dy);
+      let w10 = dx*(1-dy);
+      let w01 = (1-dx)*dy;
+      let w11 = dx*dy;
+
+      V[i0][j0]     += p.vy*w00;
+      V[i1][j0]     += p.vy*w10;
+      V[i0][j1]     += p.vy*w01;
+      V[i1][j1]     += p.vy*w11;
+
+      Vweight[i0][j0] += w00;
+      Vweight[i1][j0] += w10;
+      Vweight[i0][j1] += w01;
+      Vweight[i1][j1] += w11;
+    }
+  }
+
+  // 5) Average out velocities
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx+1; i++) {
+      let w = Uweight[i][j];
+      if (w > 0) {
+        U[i][j] /= w;
+      } else {
+        U[i][j] = 0;
+      }
+    }
+  }
+  for (let j = 0; j < Ny+1; j++) {
+    for (let i = 0; i < Nx; i++) {
+      let w = Vweight[i][j];
+      if (w > 0) {
+        V[i][j] /= w;
+      } else {
+        V[i][j] = 0;
+      }
+    }
+  }
+
+  // 5.5. Clip all velocities to prevent blow-ups
+    for (let j = 0; j < Ny; j++) {
+        for (let i = 0; i < Nx+1; i++) {
+        U[i][j] = clamp(U[i][j], -1, 1);
+        }
+    }
+
+  // 6) Build dynamic obstacle mask from mouse circle
+  //    Then combine with static boundary solids => final mask
+  resetDynamicMask();
+  if (mouseDown) {
+    fillCircleInMask(mouseX, mouseY, RADIUS_SOLID_CIRCLE, dynamicSolidMask);
+  }
+  let finalMask = combineMasks(solidMask, dynamicSolidMask);
+
+  // 7) Build particle density & mark water cells
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      particleDensity[i][j] = 0;
+    }
+  }
+  for (let p of particles) {
+    let i = Math.floor(p.x);
+    let j = Math.floor(p.y);
+    if (i < 0 || i >= Nx || j < 0 || j >= Ny) continue;
+    // count
+    particleDensity[i][j] += 1;
+  }
+
+  // 8) Pressure solve: divergence -> pressure
+  pressureProjection(finalMask);
+
+  // 9) Transfer velocities from grid -> particles (FLIP+PIC)
+  for (let p of particles) {
+    let newVx = sampleFieldU(p.x, p.y, U);
+    let newVy = sampleFieldV(p.x, p.y, V);
+
+    let oldVx = sampleFieldU(p.x, p.y, Uprev);
+    let oldVy = sampleFieldV(p.x, p.y, Vprev);
+
+    let flipVx = p.vx + (newVx - oldVx);
+    let flipVy = p.vy + (newVy - oldVy);
+    let picVx  = newVx;
+    let picVy  = newVy;
+
+    p.vx = (1 - flipRatio)*picVx + flipRatio*flipVx;
+    p.vy = (1 - flipRatio)*picVy + flipRatio*flipVy;
+  }
+
+  // 10) Push apart overlapping particles
+  pushApartParticles();
+
+  // 11) Render
+  draw(finalMask);
+  requestAnimationFrame(update);
+}
+
+function clamp(v, minVal, maxVal) {
+  return Math.max(minVal, Math.min(maxVal, v));
+}
+
+// ---------------------------------------------------------
+// PRESSURE PROJECTION
+// ---------------------------------------------------------
+function pressureProjection(mask) {
+  // 1) Compute divergence
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      if (mask[i][j] === 0) {
+        // Solid => no flow
+        divergence[i][j] = 0;
+        continue;
+      }
+      let div = (U[i+1][j] - U[i][j]) + (V[i][j+1] - V[i][j]);
+      divergence[i][j] = div;
+    }
+  }
+
+  // 2) Particle density correction
+  //    We try to push out "extra" dense areas
+  let sum = 0;
+  let count = 0;
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      if (mask[i][j] !== 0 && particleDensity[i][j] > 0) {
+        sum += particleDensity[i][j];
+        count++;
+      }
+    }
+  }
+  let restDensity = 0;
+  if (count > 0) restDensity = sum / count;
+  let K = 1.0;
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      if (mask[i][j] === 0) continue;
+      let dens = particleDensity[i][j];
+      if (dens > restDensity) {
+        let ratio = dens - restDensity;
+        divergence[i][j] -= K * ratio;
+      }
+    }
+  }
+
+  // 3) Solve Poisson eqn for pressure with Gauss-Seidel
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      pressure[i][j] = 0;
+    }
+  }
+
+  for (let iter = 0; iter < iterations; iter++) {
+    for (let j = 1; j < Ny-1; j++) {
+      for (let i = 1; i < Nx-1; i++) {
+        if (mask[i][j] === 0) continue; // skip solids
+        let sumP = 0;
+        let nCount = 0;
+
+        // left
+        if (mask[i-1][j] === 1) { sumP += pressure[i-1][j]; nCount++; }
+        // right
+        if (mask[i+1][j] === 1) { sumP += pressure[i+1][j]; nCount++; }
+        // down
+        if (mask[i][j-1] === 1) { sumP += pressure[i][j-1]; nCount++; }
+        // up
+        if (mask[i][j+1] === 1) { sumP += pressure[i][j+1]; nCount++; }
+
+        if (nCount > 0) {
+          let newP = (sumP - divergence[i][j]) / nCount;
+          pressure[i][j] = pressure[i][j] + overRelaxation*(newP - pressure[i][j]);
+        }
+      }
+    }
+  }
+
+  // 4) Subtract gradient from velocity
+  for (let j = 1; j < Ny-1; j++) {
+    for (let i = 1; i < Nx; i++) {
+      if (mask[i][j] === 1 && mask[i-1][j] === 1) {
+        U[i][j] -= 0.5*(pressure[i][j] - pressure[i-1][j]);
+      } else {
+        U[i][j] = 0; // no-slip at solid boundary
+      }
+    }
+  }
+  for (let j = 1; j < Ny; j++) {
+    for (let i = 1; i < Nx-1; i++) {
+      if (mask[i][j] === 1 && mask[i][j-1] === 1) {
+        V[i][j] -= 0.5*(pressure[i][j] - pressure[i][j-1]);
+      } else {
+        V[i][j] = 0; // no-slip at solid boundary
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------
+// SAMPLERS
+// ---------------------------------------------------------
+function sampleFieldU(x, y, fieldU) {
+  let i = Math.floor(x);
+  let j = Math.floor(y);
+  i = clamp(i, 0, Nx-1);
+  j = clamp(j, 0, Ny-1);
+
+  let dx = x - i;
+  let dy = y - j;
+
+  let v00 = fieldU[i][j];
+  let v10 = fieldU[i+1][j];
+  let v01 = fieldU[i][j+1]     !== undefined ? fieldU[i][j+1]     : v00;
+  let v11 = fieldU[i+1][j+1]   !== undefined ? fieldU[i+1][j+1]   : v10;
+
+  let v0 = v00*(1-dx) + v10*dx;
+  let v1 = v01*(1-dx) + v11*dx;
+
+  return v0*(1-dy) + v1*dy;
+}
+
+function sampleFieldV(x, y, fieldV) {
+  let i = Math.floor(x);
+  let j = Math.floor(y);
+  i = clamp(i, 0, Nx-1);
+  j = clamp(j, 0, Ny-1);
+
+  let dx = x - i;
+  let dy = y - j;
+
+  let v00 = fieldV[i][j];
+  let v10 = fieldV[i+1] ? fieldV[i+1][j] : v00;
+  let v01 = fieldV[i][j+1]     !== undefined ? fieldV[i][j+1]     : v00;
+  let v11 = fieldV[i+1] && fieldV[i+1][j+1] !== undefined ? fieldV[i+1][j+1] : v10;
+
+  let v0 = v00*(1-dx) + v10*dx;
+  let v1 = v01*(1-dx) + v11*dx;
+
+  return v0*(1-dy) + v1*dy;
+}
+
+// ---------------------------------------------------------
+// PUSH APART PARTICLES
+// ---------------------------------------------------------
+function pushApartParticles() {
+  let binSize = 1.0;
+  let bins = {};
+
+  function binKey(x, y) {
+    let ix = Math.floor(x/binSize);
+    let iy = Math.floor(y/binSize);
+    return ix + "_" + iy;
+  }
+
+  // Build bins
+  for (let i = 0; i < particles.length; i++) {
+    let p = particles[i];
+    let k = binKey(p.x, p.y);
+    if (!bins[k]) bins[k] = [];
+    bins[k].push(i);
+  }
+
+  let desiredDist = 0.5;
+  for (let k in bins) {
+    let inds = bins[k];
+    for (let a = 0; a < inds.length; a++) {
+      for (let b = a+1; b < inds.length; b++) {
+        let pa = particles[inds[a]];
+        let pb = particles[inds[b]];
+        let dx = pb.x - pa.x;
+        let dy = pb.y - pa.y;
+        let d2 = dx*dx + dy*dy;
+        if (d2 < desiredDist*desiredDist && d2 > 1e-7) {
+          let dist = Math.sqrt(d2);
+          let over = 0.5*(desiredDist - dist);
+          dx /= dist; dy /= dist;
+          pa.x -= dx*over;
+          pa.y -= dy*over;
+          pb.x += dx*over;
+          pb.y += dy*over;
+
+          // damp relative velocity
+          let kDamp = 0.5;
+          let relvx = pb.vx - pa.vx;
+          let relvy = pb.vy - pa.vy;
+          let proj = relvx*dx + relvy*dy;
+          if (proj < 0) {
+            pa.vx += kDamp*proj*dx;
+            pa.vy += kDamp*proj*dy;
+            pb.vx -= kDamp*proj*dx;
+            pb.vy -= kDamp*proj*dy;
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------
+// DYNAMIC SOLID MASK HELPERS
+// ---------------------------------------------------------
+function resetDynamicMask() {
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      dynamicSolidMask[i][j] = 0;
+    }
+  }
+}
+
+// Fills a circle of radius "r" in "mask" with 0's (solids)
+function fillCircleInMask(cx, cy, r, mask) {
+  // (cx,cy) in grid coords
+  let r2 = r*r;
+  let xStart = Math.floor(cx - r);
+  let xEnd   = Math.floor(cx + r);
+  let yStart = Math.floor(cy - r);
+  let yEnd   = Math.floor(cy + r);
+
+  for (let j = yStart; j <= yEnd; j++) {
+    for (let i = xStart; i <= xEnd; i++) {
+      if (i < 0 || i >= Nx || j < 0 || j >= Ny) continue;
+      let dx = i - cx;
+      let dy = j - cy;
+      if (dx*dx + dy*dy <= r2) {
+        mask[i][j] = 1; // we'll treat 1 in "dynamicSolidMask" to mean "this cell is blocked"
+      }
+    }
+  }
+}
+
+// Combine static boundary mask (solidMask) with the dynamic one
+// If dynamicSolidMask[i][j] == 1 => forced solid
+// else we keep whatever's in the static one
+function combineMasks(staticMask, dynMask) {
+  let combo = createArray2D(Nx, Ny, 1);
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      if (staticMask[i][j] === 0) {
+        combo[i][j] = 0; // boundary or permanent solid
+      } else if (dynMask[i][j] === 1) {
+        combo[i][j] = 0; // dynamic circle => also a solid
+      } else {
+        combo[i][j] = 1; // fluid
+      }
+    }
+  }
+  return combo;
+}
+
+// ---------------------------------------------------------
+// RENDER
+// ---------------------------------------------------------
+function draw(mask) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw fluid particles
+  ctx.fillStyle = "#66ccff";
+  ctx.beginPath();
+  for (let p of particles) {
+    let sx = p.x * CELL_SIZE;
+    let sy = p.y * CELL_SIZE;
+    ctx.moveTo(sx, sy);
+    ctx.arc(sx, sy, 2, 0, 2*Math.PI);
+  }
+  ctx.fill();
+
+  // Draw dynamic obstacle circle (if mouse down)
+  if (mouseDown) {
+    ctx.strokeStyle = "rgba(255, 100, 100, 0.8)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mouseX*CELL_SIZE, mouseY*CELL_SIZE, RADIUS_SOLID_CIRCLE*CELL_SIZE, 0, 2*Math.PI);
+    ctx.stroke();
+  }
+
+  // Optionally, draw the combined solid mask (debug) as gray squares
+  // If you want to see which cells are marked as solids:
+  /*
+  for (let j = 0; j < Ny; j++) {
+    for (let i = 0; i < Nx; i++) {
+      if (mask[i][j] === 0) {
+        ctx.fillStyle = "rgba(128,128,128,0.25)";
+        ctx.fillRect(i*CELL_SIZE, j*CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      }
+    }
+  }
+  */
+}
+
+
+
+document.getElementById("resetBtn").addEventListener("click", () => {
+  init();
+});
+
+// Kick off
+init();
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
