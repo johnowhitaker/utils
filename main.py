@@ -1,6 +1,8 @@
 from fasthtml.common import *
+from fasthtml_apps.ctsearch import ar as cts_ar
 
 app = FastHTML(hdrs=(picolink))
+cts_ar.to_app(app)
 
 @app.get("/")
 def home():
@@ -11,6 +13,7 @@ def home():
             Li(A("Audio Viz", href="/audio_viz"), " - Visualize audio in the browser like old school media players"),
             Li(A("FaceWave", href="/facewave"), " - control MIDI with face + hands!"),
             Li(A("MSynth", href="/msynth"), " - Quick way to test FaceWave - a simple synth that takes midi CC in. You will also need loopMIDI"),
+            Li(A("Cool Tools Search", href="/cts"), " - Search 'Cool Tools Show' past recommendations"),
         ),
         P("Misc ones:"),
         Ul(
@@ -27,14 +30,14 @@ print(static_apps_dir)
 for path in static_apps_dir.glob("*"):
     if path.is_dir():
         app_name = path.name
-        print(f"Adding route: /{app_name}")
+        # print(f"Adding route: /{app_name}")
         @app.get(f'/{app_name}')
         def serve_index(app_name: str = app_name):
             return FileResponse(static_apps_dir / app_name / 'index.html')
         
         for asset in (path/'assets').glob("*"):
             asset_name = asset.name
-            print(f"Adding asset: {app_name}/{asset_name}")
+            # print(f"Adding asset: {app_name}/{asset_name}")
             @app.get(f'/assets/{app_name}/{asset_name}')
             def serve_asset(asset_name: str = asset_name, app_name: str = app_name):
                 return FileResponse(static_apps_dir / app_name / 'assets' / asset_name)
