@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SVG to GCode for Hanging Pen Plotter</title>
+    <!-- Using a normalize.css from a CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" />
+    <style>
+      body {
+        font-family: sans-serif;
+        padding: 20px;
+        max-width: 800px;
+        margin: auto;
+      }
+      label {
+        display: block;
+        margin: 10px 0 4px;
+      }
+      input[type="number"],
+      input[type="text"] {
+        width: 100%;
+        padding: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        margin-top: 10px;
+        padding: 8px 12px;
+      }
+      canvas {
+        border: 1px solid #ccc;
+        margin-top: 10px;
+        background: #fff;
+      }
+      textarea {
+        width: 100%;
+        height: 200px;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SVG to GCode for Hanging Pen Plotter</h1>
+    <div>
+      <label>SVG File:
+        <input type="file" id="svgFile" accept=".svg" />
+      </label>
+      <label>Stepper Motor Separation (mm):
+        <input type="number" id="motorSeparation" value="800" />
+      </label>
+      <label>Scale Factor (mm string per mm command):
+        <input type="number" id="scaleFactor" step="0.01" value="1.0" />
+      </label>
+      <label>Starting String Length (mm):
+        <input type="number" id="startingLength" value="400" />
+      </label>
+      <label>SVG Scale:
+        <input type="number" id="svgScale" step="0.1" value="0.3" />
+      </label>
+      <label>Drawing X Offset (mm)<br />(shift drawing downward):
+        <input type="number" id="xOffset" value="-200" />
+      </label>
+      <label>Drawing Y Offset (mm)<br />(shift drawing downward):
+        <input type="number" id="yOffset" value="200" />
+      </label>
+      <label>Pen Up GCode:
+        <input type="text" id="penUpCode" value="G0 Z10" />
+      </label>
+      <label>Pen Down GCode:
+        <input type="text" id="penDownCode" value="G0 Z0" />
+      </label>
+      <button id="generateBtn">Generate GCode &amp; Preview</button>
+    </div>
+
+    <h2>Preview</h2>
+    <canvas id="previewCanvas" width="600" height="600"></canvas>
+
+    <h2>Generated GCode</h2>
+    <textarea id="gcodeOutput" readonly></textarea>
+
+    <script>
+      // Global variable to store parsed poly-lines.
+      let svgPolylines = [];
+
+      // When the user selects a file, read and parse the SVG.
+      document.getElementById("svgFile").addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          svgPolylines = parseSVG(event.target.result);
+          if (svgPolylines.length === 0) {
+            alert("No polyline elements found in the SVG.");
+          } else {
+            alert("Parsed " + svgPolylines.length + " polyline(s).");
+          }
+        };
+        reader.readAsText(file);
+      });
+
+      // When the button is clicked, generate the GCode and update preview.
+      document.getElementById("generateBtn").addEventListener("click", () => {
+        if (svgPolylines.length === 0) {
+          alert("Please upload an SVG file with <polyline> elements first.");
+          return;
+        }
+        const params = getParams();
+        // Process each polyline: apply SVG scale and y offset.
+        const processedPolylines = svgPolylines.map((line) =>
+          line.map((pt) => ({
+            x: pt.x * params.svgScale + params.xOffset,
+            // Add the offset so the drawing lies below the motors.
+            y: pt.y * params.svgScale + params.yOffset,
+          }))
+        );
+        const gcode = generateGCode(processedPolylines, params);
+        document.getElementById("gcodeOutput").value = gcode;
+        updatePreview(processedPolylines, params);
+      });
+
+      // Get numeric and text parameters from the form.
+      function getParams() {
+        return {
+          motorSeparation: parseFloat(document.getElementById("motorSeparation").value),
+          scaleFactor: parseFloat(document.getElementById("scaleFactor").value),
+          startingLength: parseFloat(document.getElementById("startingLength").value),
+          svgScale: parseFloat(document.getElementById("svgScale").value),
+          xOffset: parseFloat(document.getElementById("xOffset").value),
+          yOffset: parseFloat(document.getElementById("yOffset").value),
+          penUpCode: document.getElementById("penUpCode").value,
+          penDownCode: document.getElementById("penDownCode").value,
+        };
+      }
+
+      // Parse the SVG text and extract polyline points.
+      function parseSVG(svgText) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgText, "image/svg+xml");
+        const polyElems = doc.getElementsByTagName("polyline");
+        const lines = [];
+        for (let i = 0; i < polyElems.length; i++) {
+          const pts = polyElems[i].getAttribute("points");
+          if (!pts) continue;
+          // Split on spaces and/or commas.
+          const nums = pts.trim().split(/[\s,]+/).filter((s) => s.length > 0).map(Number);
+          const line = [];
+          for (let j = 0; j < nums.length; j += 2) {
+            line.push({ x: nums[j], y: nums[j + 1] });
+          }
+          lines.push(line);
+        }
+        return lines;
+      }
+
+      // Given a desired pen position p = {x, y}, compute the commanded positions.
+      // Motor positions: left: (-D/2, 0) and right: (D/2, 0)
+      // L_left = distance from left motor to p, L_right = distance from right motor.
+      // commanded = (L - startingLength)/scaleFactor.
+      function computeCommanded(p, params) {
+        const D = params.motorSeparation;
+        const L0 = params.startingLength;
+        const S = params.scaleFactor;
+        const L_left = Math.sqrt(Math.pow(p.x + D / 2, 2) + Math.pow(p.y, 2));
+        const L_right = Math.sqrt(Math.pow(p.x - D / 2, 2) + Math.pow(p.y, 2));
+        return { left: (L_left - L0) / S, right: (L_right - L0) / S };
+      }
+
+      // Inverse kinematics: given commanded {left, right}, compute pen position.
+      // Actual string lengths: L = startingLength + scaleFactor * commanded.
+      // Then, given motor separation D, we compute:
+      // a = (L_left^2 - L_right^2 + D^2)/(2*D)  and h = sqrt(L_left^2 - a^2).
+      // We choose the positive h (pen hanging below the motors).
+      function inverseKinematics(cmd, params) {
+        const D = params.motorSeparation;
+        const L0 = params.startingLength;
+        const S = params.scaleFactor;
+        const L_left = L0 + S * cmd.left;
+        const L_right = L0 + S * cmd.right;
+        const a = (Math.pow(L_left, 2) - Math.pow(L_right, 2) + Math.pow(D, 2)) / (2 * D);
+        const underSqrt = Math.pow(L_left, 2) - Math.pow(a, 2);
+        if (underSqrt < 0) {
+          // In a real system you might want to handle this better.
+          return null;
+        }
+        const h = Math.sqrt(underSqrt);
+        const x = -D / 2 + a;
+        const y = h; // choose the lower solution (pen hanging below the motors)
+        return { x, y };
+      }
+
+      // Generate the GCode from the processed polylines.
+      function generateGCode(polylines, params) {
+        const lines = [];
+        lines.push("; Generated by SVG-to-GCODE Hanging Pen Plotter tool");
+        lines.push("; Motor separation: " + params.motorSeparation + " mm, Scale factor: " + params.scaleFactor + ", Starting string length: " + params.startingLength + " mm");
+        // For each polyline...
+        polylines.forEach((pline, pIndex) => {
+          if (pline.length === 0) return;
+          // Move to the start of the polyline with a rapid move (G0) with pen up.
+          const startCmd = computeCommanded(pline[0], params);
+          lines.push(`G0 X${startCmd.left.toFixed(3)} Y${startCmd.right.toFixed(3)} ; move to start of polyline ${pIndex + 1}`);
+          lines.push(params.penDownCode + " ; pen down");
+          // Then for each subsequent point, output a drawing move (G1).
+          for (let i = 1; i < pline.length; i++) {
+            const cmd = computeCommanded(pline[i], params);
+            lines.push(`G1 X${cmd.left.toFixed(3)} Y${cmd.right.toFixed(3)}`);
+          }
+          // After finishing the polyline, lift the pen.
+          lines.push(params.penUpCode + " ; pen up");
+        });
+        return lines.join("\n");
+      }
+
+      // Update the preview canvas by simulating the drawing.
+      function updatePreview(polylines, params) {
+        const canvas = document.getElementById("previewCanvas");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // We’ll collect all simulated pen positions (from interpolated commanded moves)
+        // so we can compute a bounding box.
+        let simPoints = [];
+        // For each polyline, simulate the move between consecutive commanded positions.
+        const segments = [];
+        polylines.forEach((pline) => {
+          if (pline.length === 0) return;
+          // Compute commanded positions for the polyline.
+          const cmds = pline.map((pt) => computeCommanded(pt, params));
+          // For each segment, sample (say 20 samples).
+          for (let i = 0; i < cmds.length - 1; i++) {
+            const seg = [];
+            const samples = 20;
+            for (let j = 0; j <= samples; j++) {
+              const t = j / samples;
+              const interp = {
+                left: cmds[i].left * (1 - t) + cmds[i + 1].left * t,
+                right: cmds[i].right * (1 - t) + cmds[i + 1].right * t,
+              };
+              const pos = inverseKinematics(interp, params);
+              if (pos) {
+                seg.push(pos);
+                simPoints.push(pos);
+              }
+            }
+            segments.push(seg);
+          }
+        });
+
+        // If no simulation points, nothing to draw.
+        if (simPoints.length === 0) return;
+
+        // Compute bounding box for the simulated pen path.
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        simPoints.forEach((p) => {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        });
+
+        // Also include the motor positions in the bounds.
+        const D = params.motorSeparation;
+        const motors = [{ x: -D / 2, y: 0 }, { x: D / 2, y: 0 }];
+        motors.forEach((p) => {
+          if (p.x < minX) minX = p.x;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+        });
+
+        // Determine scale (pixels per mm) and offset so that the drawing fits the canvas.
+        const margin = 20;
+        const drawWidth = maxX - minX;
+        const drawHeight = maxY - minY;
+        const scaleX = (canvas.width - 2 * margin) / drawWidth;
+        const scaleY = (canvas.height - 2 * margin) / drawHeight;
+        const scale = Math.min(scaleX, scaleY);
+        // Offset so that minX,minY maps to margin,margin.
+        const offsetX = margin - minX * scale;
+        const offsetY = margin - minY * scale;
+
+        // Draw motors.
+        ctx.fillStyle = "red";
+        motors.forEach((m) => {
+          const cx = m.x * scale + offsetX;
+          const cy = m.y * scale + offsetY;
+          ctx.beginPath();
+          ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+
+        // Draw each simulated pen path.
+        ctx.strokeStyle = "blue";
+        ctx.lineWidth = 2;
+        segments.forEach((seg) => {
+          ctx.beginPath();
+          seg.forEach((pt, i) => {
+            const x = pt.x * scale + offsetX;
+            const y = pt.y * scale + offsetY;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        });
+
+        // Optionally, draw the strings (from each motor to the pen) along one sample of each segment.
+        ctx.strokeStyle = "rgba(0,0,0,0.03)";
+        segments.forEach((seg) => {
+          // Draw for the middle point of each segment.
+          const mid = seg[Math.floor(seg.length / 2)];
+          motors.forEach((m) => {
+            ctx.beginPath();
+            ctx.moveTo(m.x * scale + offsetX, m.y * scale + offsetY);
+            ctx.lineTo(mid.x * scale + offsetX, mid.y * scale + offsetY);
+            ctx.stroke();
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
