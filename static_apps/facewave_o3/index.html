@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FaceWave</title>
+  <!-- Include MediaPipe libraries for face and hand tracking -->
+  <script src="https://unpkg.com/@mediapipe/face_mesh"></script>
+  <script src="https://unpkg.com/@mediapipe/hands"></script>
+  <style>
+    /* Basic stylish dark theme */
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #222;
+      color: #eee;
+    }
+    h1 { text-align: center; margin: 20px 0; }
+    #video-container {
+      position: relative;
+      display: flex;
+      justify-content: center;
+    }
+    video {
+      max-width: 100%;
+      border: 5px solid #444;
+      border-radius: 10px;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+    #controls { padding: 20px; }
+    #device-settings {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    #device-settings label { font-size: 0.9em; }
+    .cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+    }
+    .card {
+      background: #333;
+      border-radius: 10px;
+      padding: 15px;
+      width: 250px;
+    }
+    .card h3 { margin-top: 0; }
+    .card .display {
+      text-align: center;
+      margin: 10px 0;
+    }
+    .card progress { width: 100%; height: 20px; }
+    .card .mapping label {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 0.9em;
+    }
+    .card .mapping input {
+      width: 100%;
+      margin-top: 2px;
+      margin-bottom: 5px;
+      padding: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h1>FaceWave</h1>
+  <div id="video-container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="controls">
+    <div id="device-settings">
+      <label>
+        Webcam:
+        <select id="webcam-select"></select>
+      </label>
+      <label>
+        MIDI Output:
+        <select id="midi-select"></select>
+      </label>
+    </div>
+    <div class="cards">
+      <!-- Card for Head Height -->
+      <div class="card" id="control-head-height">
+        <h3>Head Height</h3>
+        <div class="display">
+          <span id="value-head-height">0</span>
+          <progress id="progress-head-height" value="0" max="1"></progress>
+        </div>
+        <div class="mapping">
+          <label>CC Code:
+            <input type="number" id="cc-head-height" value="1" />
+          </label>
+          <label>Input Min:
+            <input type="number" id="inputMin-head-height" value="0" step="0.01" />
+          </label>
+          <label>Input Max:
+            <input type="number" id="inputMax-head-height" value="1" step="0.01" />
+          </label>
+          <label>Output Min:
+            <input type="number" id="outputMin-head-height" value="0" />
+          </label>
+          <label>Output Max:
+            <input type="number" id="outputMax-head-height" value="127" />
+          </label>
+          <label>Invert:
+            <input type="checkbox" id="invert-head-height" />
+          </label>
+        </div>
+      </div>
+      <!-- Card for Mouth Openness -->
+      <div class="card" id="control-mouth-openness">
+        <h3>Mouth Openness</h3>
+        <div class="display">
+          <span id="value-mouth-openness">0</span>
+          <progress id="progress-mouth-openness" value="0" max="1"></progress>
+        </div>
+        <div class="mapping">
+          <label>CC Code:
+            <input type="number" id="cc-mouth-openness" value="2" />
+          </label>
+          <label>Input Min:
+            <input type="number" id="inputMin-mouth-openness" value="0" step="0.01" />
+          </label>
+          <label>Input Max:
+            <input type="number" id="inputMax-mouth-openness" value="0.2" step="0.01" />
+          </label>
+          <label>Output Min:
+            <input type="number" id="outputMin-mouth-openness" value="0" />
+          </label>
+          <label>Output Max:
+            <input type="number" id="outputMax-mouth-openness" value="127" />
+          </label>
+          <label>Invert:
+            <input type="checkbox" id="invert-mouth-openness" />
+          </label>
+        </div>
+      </div>
+      <!-- Card for Hand Height -->
+      <div class="card" id="control-hand-height">
+        <h3>Hand Height</h3>
+        <div class="display">
+          <span id="value-hand-height">0</span>
+          <progress id="progress-hand-height" value="0" max="1"></progress>
+        </div>
+        <div class="mapping">
+          <label>CC Code:
+            <input type="number" id="cc-hand-height" value="3" />
+          </label>
+          <label>Input Min:
+            <input type="number" id="inputMin-hand-height" value="0" step="0.01" />
+          </label>
+          <label>Input Max:
+            <input type="number" id="inputMax-hand-height" value="1" step="0.01" />
+          </label>
+          <label>Output Min:
+            <input type="number" id="outputMin-hand-height" value="0" />
+          </label>
+          <label>Output Max:
+            <input type="number" id="outputMax-hand-height" value="127" />
+          </label>
+          <label>Invert:
+            <input type="checkbox" id="invert-hand-height" />
+          </label>
+        </div>
+      </div>
+      <!-- Card for Head Left/Right -->
+      <div class="card" id="control-head-left-right">
+        <h3>Head Left/Right</h3>
+        <div class="display">
+          <span id="value-head-left-right">0</span>
+          <progress id="progress-head-left-right" value="0" max="1"></progress>
+        </div>
+        <div class="mapping">
+          <label>CC Code:
+            <input type="number" id="cc-head-left-right" value="4" />
+          </label>
+          <label>Input Min:
+            <input type="number" id="inputMin-head-left-right" value="0" step="0.01" />
+          </label>
+          <label>Input Max:
+            <input type="number" id="inputMax-head-left-right" value="1" step="0.01" />
+          </label>
+          <label>Output Min:
+            <input type="number" id="outputMin-head-left-right" value="0" />
+          </label>
+          <label>Output Max:
+            <input type="number" id="outputMax-head-left-right" value="127" />
+          </label>
+          <label>Invert:
+            <input type="checkbox" id="invert-head-left-right" />
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global state for tracking values (all normalized 0–1 unless otherwise noted)
+    const trackingData = {
+      headX: 0,         // average x of face landmarks
+      headY: 0,         // average y of face landmarks
+      mouthOpenness: 0, // estimated from distance between upper/lower lip
+      handY: 0          // average y of hand landmarks
+    };
+
+    // Get references to DOM elements
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const overlayCtx = overlay.getContext('2d');
+    const webcamSelect = document.getElementById('webcam-select');
+    const midiSelect = document.getElementById('midi-select');
+
+    // For offscreen processing
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+
+    // ----- SETUP MEDIAPIPE FACE MESH -----
+    const faceMesh = new FaceMesh({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    faceMesh.onResults(results => {
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        let sumX = 0, sumY = 0;
+        landmarks.forEach(pt => {
+          sumX += pt.x;
+          sumY += pt.y;
+        });
+        trackingData.headX = sumX / landmarks.length;
+        trackingData.headY = sumY / landmarks.length;
+        // Estimate mouth openness using two landmark indices (13 and 14)
+        if (landmarks[13] && landmarks[14]) {
+          const dy = landmarks[14].y - landmarks[13].y;
+          trackingData.mouthOpenness = Math.abs(dy);
+        }
+      }
+    });
+
+    // ----- SETUP MEDIAPIPE HANDS -----
+    const hands = new Hands({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    hands.onResults(results => {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        let sumY = 0;
+        landmarks.forEach(pt => { sumY += pt.y; });
+        trackingData.handY = sumY / landmarks.length;
+      }
+    });
+
+    // ----- VIDEO SETUP -----
+    async function getWebcams() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      webcamSelect.innerHTML = videoDevices.map(device =>
+        `<option value="${device.deviceId}">${device.label || 'Camera'}</option>`
+      ).join('');
+    }
+
+    webcamSelect.addEventListener('change', () => {
+      startVideo(webcamSelect.value);
+    });
+
+    async function startVideo(deviceId) {
+      if (window.stream) {
+        window.stream.getTracks().forEach(track => track.stop());
+      }
+      const constraints = { video: { deviceId: { exact: deviceId } } };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      video.play();
+    }
+
+    // ----- MIDI SETUP -----
+    let midiAccess = null;
+    let midiOutput = null;
+    function onMIDISuccess(midi) {
+      midiAccess = midi;
+      updateMIDIOutputs();
+    }
+    function onMIDIFailure(msg) {
+      console.error('MIDI access failed: ' + msg);
+    }
+    function updateMIDIOutputs() {
+      const outputs = Array.from(midiAccess.outputs.values());
+      midiSelect.innerHTML = outputs.map(output =>
+        `<option value="${output.id}">${output.name}</option>`
+      ).join('');
+      midiSelect.addEventListener('change', () => {
+        midiOutput = midiAccess.outputs.get(midiSelect.value);
+      });
+      if (outputs.length > 0) midiOutput = outputs[0];
+    }
+    if (navigator.requestMIDIAccess) {
+      navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+    } else {
+      console.warn('WebMIDI is not supported in this browser.');
+    }
+
+    // ----- MAPPING AND CONTROL UPDATE -----
+    // Map a value from input range to output range (with optional inversion)
+    function mapValue(value, inMin, inMax, outMin, outMax, invert) {
+      let norm = (value - inMin) / (inMax - inMin);
+      norm = Math.max(0, Math.min(1, norm));
+      if (invert) norm = 1 - norm;
+      return Math.round(norm * (outMax - outMin) + outMin);
+    }
+
+    // Define our four controls: each maps a key from trackingData to a card
+    const controls = [
+      { id: 'head-height', valueKey: 'headY' },
+      { id: 'mouth-openness', valueKey: 'mouthOpenness' },
+      { id: 'hand-height', valueKey: 'handY' },
+      { id: 'head-left-right', valueKey: 'headX' }
+    ];
+    // To avoid sending redundant MIDI messages
+    const lastMidiValues = {};
+
+    function updateControls() {
+      controls.forEach(control => {
+        const raw = trackingData[control.valueKey];
+        const ccCode = parseInt(document.getElementById('cc-' + control.id).value, 10);
+        const inMin  = parseFloat(document.getElementById('inputMin-' + control.id).value);
+        const inMax  = parseFloat(document.getElementById('inputMax-' + control.id).value);
+        const outMin = parseInt(document.getElementById('outputMin-' + control.id).value, 10);
+        const outMax = parseInt(document.getElementById('outputMax-' + control.id).value, 10);
+        const invert = document.getElementById('invert-' + control.id).checked;
+        const mappedVal = mapValue(raw, inMin, inMax, outMin, outMax, invert);
+
+        // Update UI displays
+        document.getElementById('value-' + control.id).textContent = mappedVal;
+        const progressEl = document.getElementById('progress-' + control.id);
+        progressEl.value = Math.max(0, Math.min(1, (raw - inMin) / (inMax - inMin)));
+
+        // Send MIDI if the value changed
+        if (midiOutput && lastMidiValues[control.id] !== mappedVal) {
+          // MIDI Control Change on channel 1 (0xB0)
+          midiOutput.send([0xB0, ccCode, mappedVal]);
+          lastMidiValues[control.id] = mappedVal;
+        }
+      });
+    }
+
+    // ----- ANIMATION LOOP -----
+    async function animate() {
+      if (video.readyState >= 2) {
+        // Set canvas sizes to match video
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        offscreenCanvas.width = video.videoWidth;
+        offscreenCanvas.height = video.videoHeight;
+
+        // Draw current video frame to offscreen canvas
+        offscreenCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+
+        // Process tracking via MediaPipe (passing the offscreen canvas)
+        await faceMesh.send({ image: offscreenCanvas });
+        await hands.send({ image: offscreenCanvas });
+
+        // Clear overlay and draw simple visuals
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        overlayCtx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+        // Draw head center
+        overlayCtx.beginPath();
+        overlayCtx.arc(trackingData.headX * overlay.width, trackingData.headY * overlay.height, 10, 0, 2 * Math.PI);
+        overlayCtx.fill();
+        // Draw a circle for hand (using only handY; here we fix x to 80% of width)
+        overlayCtx.beginPath();
+        overlayCtx.arc(overlay.width * 0.8, trackingData.handY * overlay.height, 10, 0, 2 * Math.PI);
+        overlayCtx.fill();
+        // (Optional) indicate mouth position by drawing a circle offset from the head center
+        overlayCtx.beginPath();
+        overlayCtx.arc(trackingData.headX * overlay.width, (trackingData.headY + trackingData.mouthOpenness * 100) * overlay.height, 10, 0, 2 * Math.PI);
+        overlayCtx.fill();
+
+        // Update the control cards and send MIDI messages as needed
+        updateControls();
+      }
+      requestAnimationFrame(animate);
+    }
+
+    // ----- INITIALIZATION -----
+    (async () => {
+      await getWebcams();
+      if (webcamSelect.options.length > 0) startVideo(webcamSelect.value);
+      requestAnimationFrame(animate);
+    })();
+  </script>
+</body>
+</html>
