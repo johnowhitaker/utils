@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Particle Lenia with Emoji</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111;
+    }
+    canvas {
+      display: block;
+      background: #111;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    // --- Configuration Parameters ---
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const WIDTH = canvas.width = window.innerWidth;
+    const HEIGHT = canvas.height = window.innerHeight;
+    
+    // Number of particles
+    const N = 400;
+    // Use an emoji (feel free to change to "🐾", "✨", etc.)
+    const emoji = "✨";
+    // Set font size for particles
+    const particleFontSize = 24;
+    
+    // Simulation parameters:
+    // Parameters for the kernel (attraction/repulsion potential)
+    const mu = 150;          // equilibrium separation (in pixels)
+    const sigma = 8;        // width of Gaussian
+    const kernelStrength = 1; // weight on kernel term
+    // Extra repulsion if too close (to avoid overlapping)
+    const d0 = 10;           // repulsion cutoff distance
+    const repulsionStrength = 8.0;
+    // Time-step for integration
+    const dt = 3;
+    
+    // For potential field visualization:
+    const gridSize = 50;    // number of cells in each dimension for heatmap
+    let potentialGrid = [];
+    let gridNeedsUpdate = true; // update potential field every so many frames
+    let frameCount = 0;
+    const gridUpdateInterval = 1;
+    
+    // --- Particle Initialization ---
+    const particles = [];
+    for (let i = 0; i < N; i++) {
+      // Initialize at random positions within the canvas (with some margin)
+      particles.push({
+        x: Math.random() * WIDTH,
+        y: Math.random() * HEIGHT
+      });
+    }
+    
+    // --- Utility Functions ---
+    // Toroidal wrapping: if particle goes off one edge, it reappears on the opposite.
+    function wrapPosition(p) {
+      if (p.x < 0) p.x += WIDTH;
+      if (p.x > WIDTH) p.x -= WIDTH;
+      if (p.y < 0) p.y += HEIGHT;
+      if (p.y > HEIGHT) p.y -= HEIGHT;
+    }
+    
+    // Compute Euclidean distance (with toroidal corrections)
+    function toroidalDistance(p1, p2) {
+      let dx = Math.abs(p1.x - p2.x);
+      let dy = Math.abs(p1.y - p2.y);
+      if (dx > WIDTH/2) dx = WIDTH - dx;
+      if (dy > HEIGHT/2) dy = HEIGHT - dy;
+      return Math.sqrt(dx*dx + dy*dy);
+    }
+    
+    // Compute difference vector taking wrapping into account
+    function toroidalDiff(p1, p2) {
+      let dx = p1.x - p2.x;
+      let dy = p1.y - p2.y;
+      if (Math.abs(dx) > WIDTH/2) {
+        dx = dx > 0 ? dx - WIDTH : dx + WIDTH;
+      }
+      if (Math.abs(dy) > HEIGHT/2) {
+        dy = dy > 0 ? dy - HEIGHT : dy + HEIGHT;
+      }
+      return {dx, dy};
+    }
+    
+    // Gaussian kernel function K(r) = exp(-((r - mu)/sigma)^2)
+    function kernel(r) {
+      return Math.exp(-Math.pow((r - mu) / sigma, 2));
+    }
+    
+    // Its derivative d/dr K = -2*(r-mu)/(sigma^2)*exp(-((r-mu)/sigma)^2)
+    function dKernel(r) {
+      return -2 * (r - mu) / (sigma * sigma) * kernel(r);
+    }
+    
+    // --- Simulation Step ---
+    function updateParticles() {
+      // For each particle, compute force as sum over all other particles
+      const forces = [];
+      for (let i = 0; i < N; i++) {
+        let fx = 0, fy = 0;
+        const p_i = particles[i];
+        for (let j = 0; j < N; j++) {
+          if (i === j) continue;
+          const p_j = particles[j];
+          const {dx, dy} = toroidalDiff(p_i, p_j);
+          let r = Math.sqrt(dx*dx + dy*dy);
+          if (r < 0.0001) continue;
+          
+          // Extra short-range repulsion (if particles are extremely close)
+          if (r < d0) {
+            const repForce = repulsionStrength * (d0 - r) / r;
+            fx += repForce * dx;
+            fy += repForce * dy;
+          }
+          
+          // Kernel (growth) term: it acts repulsively for r < mu and attractively for r > mu.
+          // Compute derivative dK/dr and then force = kernelStrength * (dK/dr)/r * (dx,dy)
+          const dk = dKernel(r);
+          // Multiply the contribution by kernelStrength.
+          fx += kernelStrength * (dk / r) * dx;
+          fy += kernelStrength * (dk / r) * dy;
+        }
+        forces.push({fx, fy});
+      }
+      // Update positions using Euler integration
+      for (let i = 0; i < N; i++) {
+        particles[i].x += dt * forces[i].fx;
+        particles[i].y += dt * forces[i].fy;
+        wrapPosition(particles[i]);
+      }
+    }
+    
+    // --- Compute Potential Field for Visualization ---
+    function updatePotentialGrid() {
+      potentialGrid = [];
+      const cellW = WIDTH / gridSize;
+      const cellH = HEIGHT / gridSize;
+      let maxVal = 0;
+      // For each grid cell, compute U = sum_j kernel(distance(cell, particle))
+      for (let i = 0; i < gridSize; i++) {
+        potentialGrid[i] = [];
+        for (let j = 0; j < gridSize; j++) {
+          // Center of the cell
+          const x = (i + 0.5) * cellW;
+          const y = (j + 0.5) * cellH;
+          let sum = 0;
+          const tempPoint = {x, y};
+          for (let k = 0; k < N; k++) {
+            const p = particles[k];
+            const r = toroidalDistance(tempPoint, p);
+            sum += kernel(r);
+          }
+          potentialGrid[i][j] = sum;
+          if (sum > maxVal) maxVal = sum;
+        }
+      }
+      // Store max for normalization
+      potentialGrid.max = maxVal;
+      gridNeedsUpdate = false;
+    }
+    
+    // --- Draw the Simulation ---
+    function draw() {
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      
+      // Optionally, draw potential field as a heatmap
+      if (gridNeedsUpdate || frameCount % gridUpdateInterval === 0) {
+        updatePotentialGrid();
+      }
+      const cellW = WIDTH / gridSize;
+      const cellH = HEIGHT / gridSize;
+      for (let i = 0; i < gridSize; i++) {
+        for (let j = 0; j < gridSize; j++) {
+          const val = potentialGrid[i][j];
+          // Map value to a color intensity (using a blueish tone)
+          const intensity = Math.min(255, Math.floor(255 * val / potentialGrid.max));
+          ctx.fillStyle = `rgba(50, 150, 255, ${0.15 * intensity/255})`;
+          ctx.fillRect(i * cellW, j * cellH, cellW, cellH);
+        }
+      }
+      
+      // Draw particles as emoji
+      ctx.font = particleFontSize + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (let p of particles) {
+        ctx.fillStyle = "#fff";
+        ctx.fillText(emoji, p.x, p.y);
+      }
+    }
+    
+    // --- Animation Loop ---
+    function loop() {
+      frameCount++;
+      updateParticles();
+      draw();
+      requestAnimationFrame(loop);
+    }
+    
+    // --- Handle window resize ---
+    window.addEventListener('resize', () => {
+      canvas.width = WIDTH = window.innerWidth;
+      canvas.height = HEIGHT = window.innerHeight;
+      gridNeedsUpdate = true;
+    });
+    
+    // Start the simulation
+    loop();
+  </script>
+</body>
+</html>
