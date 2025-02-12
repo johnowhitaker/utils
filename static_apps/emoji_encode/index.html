@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emoji Message Encoder</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            background-color: #f5f5f5;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 2rem;
+        }
+
+        h1 {
+            color: #333;
+            margin: 0 0 0.5rem 0;
+        }
+
+        .description {
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .tab-button {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: none;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            font-size: 1rem;
+        }
+
+        .tab-button.active {
+            border-bottom-color: #2563eb;
+            color: #2563eb;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #374151;
+            font-weight: 500;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .emoji-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .emoji-button {
+            font-size: 1.5rem;
+            padding: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .emoji-button.selected {
+            background: #e5e7eb;
+        }
+
+        .button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .button:hover {
+            background: #1d4ed8;
+        }
+
+        .result {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background: #f3f4f6;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .result:hover {
+            background: #e5e7eb;
+        }
+
+        .copy-hint {
+            font-size: 0.875rem;
+            color: #6b7280;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Emoji Message Encoder</h1>
+        <p class="description">Hide your message in an emoji using Unicode variation selectors</p>
+
+        <div class="tabs">
+            <button class="tab-button active" data-tab="encode">Encode</button>
+            <button class="tab-button" data-tab="decode">Decode</button>
+        </div>
+
+        <div class="tab-content active" id="encode">
+            <div class="input-group">
+                <label>Select Emoji</label>
+                <div class="emoji-grid" id="emoji-grid"></div>
+            </div>
+
+            <div class="input-group">
+                <label>Message</label>
+                <input type="text" id="message" placeholder="Enter your secret message">
+            </div>
+
+            <button class="button" id="encode-button">Encode Message</button>
+
+            <div id="encode-result" style="display: none;">
+                <div class="result" id="result-text"></div>
+                <p class="copy-hint">Click to copy</p>
+            </div>
+        </div>
+
+        <div class="tab-content" id="decode">
+            <div class="input-group">
+                <label>Encoded Message</label>
+                <input type="text" id="decode-input" placeholder="Paste the encoded emoji here">
+            </div>
+
+            <button class="button" id="decode-button">Decode Message</button>
+
+            <div id="decode-result" style="display: none;">
+                <label>Decoded message:</label>
+                <div class="result" id="decoded-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Emoji encoding/decoding logic
+        function byteToVariationSelector(byte) {
+            if (byte < 16) {
+                return String.fromCodePoint(0xFE00 + byte);
+            } else {
+                return String.fromCodePoint(0xE0100 + (byte - 16));
+            }
+        }
+
+        function variationSelectorToByte(variationSelector) {
+            const code = variationSelector.codePointAt(0);
+            if (code >= 0xFE00 && code <= 0xFE0F) {
+                return code - 0xFE00;
+            } else if (code >= 0xE0100 && code <= 0xE01EF) {
+                return code - 0xE0100 + 16;
+            }
+            return null;
+        }
+
+        function encode(base, text) {
+            const bytes = new TextEncoder().encode(text);
+            let result = base;
+            for (const byte of bytes) {
+                result += byteToVariationSelector(byte);
+            }
+            return result;
+        }
+
+        function decode(input) {
+            const chars = Array.from(input);
+            const bytes = [];
+            let started = false;
+
+            for (const char of chars) {
+                const byte = variationSelectorToByte(char);
+                if (byte !== null) {
+                    started = true;
+                    bytes.push(byte);
+                } else if (!started) {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
+            return new TextDecoder().decode(new Uint8Array(bytes));
+        }
+
+        // UI Logic
+        const commonEmojis = ["😊", "🌟", "🎉", "🚀", "💡", "🌈", "🎨", "🎭", "🎪", "🎯"];
+        let selectedEmoji = "😊";
+
+        // Setup emoji grid
+        const emojiGrid = document.getElementById('emoji-grid');
+        commonEmojis.forEach(emoji => {
+            const button = document.createElement('button');
+            button.className = 'emoji-button' + (emoji === selectedEmoji ? ' selected' : '');
+            button.textContent = emoji;
+            button.onclick = () => {
+                document.querySelectorAll('.emoji-button').forEach(btn => btn.classList.remove('selected'));
+                button.classList.add('selected');
+                selectedEmoji = emoji;
+            };
+            emojiGrid.appendChild(button);
+        });
+
+        // Tab switching
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                button.classList.add('active');
+                document.getElementById(button.dataset.tab).classList.add('active');
+            });
+        });
+
+        // Encode button
+        document.getElementById('encode-button').onclick = () => {
+            const message = document.getElementById('message').value;
+            if (!message) return;
+
+            const result = encode(selectedEmoji, message);
+            const resultDiv = document.getElementById('encode-result');
+            const resultText = document.getElementById('result-text');
+            resultDiv.style.display = 'block';
+            resultText.textContent = result;
+        };
+
+        // Decode button
+        document.getElementById('decode-button').onclick = () => {
+            const input = document.getElementById('decode-input').value;
+            if (!input) return;
+
+            const result = decode(input);
+            const resultDiv = document.getElementById('decode-result');
+            const resultText = document.getElementById('decoded-text');
+            resultDiv.style.display = 'block';
+            resultText.textContent = result;
+        };
+
+        // Copy functionality
+        document.getElementById('result-text').onclick = function() {
+            navigator.clipboard.writeText(this.textContent);
+            alert('Copied to clipboard!');
+        };
+    </script>
+</body>
+</html>

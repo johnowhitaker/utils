@@ -7,19 +7,19 @@ cts_ar.to_app(app)
 @app.get("/")
 def home():
     return Titled("Hello World", Main(
-        P("My tools:"),
-        Ul( # alebrije  audio_viz  facewave  gravy  msynth  squirrel  synth
+        P("All:"),
+        Ul(
+            Li(A("Emoji Encoder", href="/emoji_encode"), " - Hide secret messages in emojis"),
             Li(A("Mini Synth", href="/synth"), " - A tiny little synth, made to jam along with MusicFX DJ"),
             Li(A("Audio Viz", href="/audio_viz"), " - Visualize audio in the browser like old school media players"),
-            Li(A("FaceWave", href="/facewave"), " - control MIDI with face + hands!"),
+            Li(A("FaceWave", href="/facewave"), " - control MIDI with face + hands!", A("(o3-mini version)", href="/facewave_o3")),
             Li(A("MSynth", href="/msynth"), " - Quick way to test FaceWave - a simple synth that takes midi CC in. You will also need loopMIDI"),
             Li(A("Cool Tools Search", href="/cts"), " - Search 'Cool Tools Show' past recommendations"),
-        ),
-        P("Misc ones:"),
-        Ul(
             Li(A("Alebrije", href="/alebrije"), " - a custom rubric for an art assignment E made"),
             Li(A("Gravy", href="/gravy"), " - a test artifact"),
             Li(A("Squirrel", href="/squirrel"), " - another test artifact"),
+            Li(A("Omnichord", href="/omnichord"), " - a clone of the original"),
+            Li(A("SVG-to-GCODE", href="/svg2g"), " - for hanging plotters specifically, buggy test (o3-mini)"),
         ),
         cls="container"
     ))
