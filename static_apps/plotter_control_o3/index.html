@@ -96,10 +96,10 @@
       <input type="number" id="scaleY" value="1" step="0.1">
     </label>
     <label>Offset X:
-      <input type="number" id="offsetX" value="0">
+      <input type="number" id="offsetX" value="450">
     </label>
     <label>Offset Y:
-      <input type="number" id="offsetY" value="0">
+      <input type="number" id="offsetY" value="450">
     </label>
     <br><br>
     <button id="convertSvgBtn">Convert SVG to GCODE (Dummy)</button>
@@ -156,6 +156,15 @@
   </div>
   
   <script>
+
+    // Calculate conversion between real string length and machine units
+    // const PULLEY_DIAMETER = 12; // mm
+    // const MACHINE_UNIT_PER_REV = 600; // 100 steps = 100mm
+    // const STEPS_PER_REV = 200; // 100 steps = half revolution
+    // const MM_PER_REV = Math.PI * PULLEY_DIAMETER;
+    // const MM_PER_MACHINE_UNIT = MM_PER_REV / MACHINE_UNIT_PER_REV
+    const MM_PER_MACHINE_UNIT = 1;
+      
     // --- Tab Switching ---
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -399,7 +408,7 @@ PENUP`;
       const oX = parseFloat(offsetXEl.value) || 0;
       const oY = parseFloat(offsetYEl.value) || 0;
       const svgCode = svgInput.value || currentSVG;
-      const gcode = dummySVGtoGCODE(svgCode, sX, sY, oX, oY);
+      const gcode = svgToGCODE(svgCode, sX, sY, oX, oY);
       gcodePreview.textContent = gcode;
       updateSvgTransformPreview();
       logMessage("Converted SVG to dummy GCODE.");
@@ -510,12 +519,6 @@ PENUP`;
       localStorage.setItem('leftString', leftStringInput.value);
       localStorage.setItem('rightString', rightStringInput.value);
 
-      // Calculate conversion between real string length and machine units
-      const PULLEY_DIAMETER = 12; // mm
-      const MACHINE_UNIT_PER_REV = 600; // 100 steps = 100mm
-      const STEPS_PER_REV = 200; // 100 steps = half revolution
-      const MM_PER_REV = Math.PI * PULLEY_DIAMETER;
-      const MM_PER_MACHINE_UNIT = MM_PER_REV / MACHINE_UNIT_PER_REV;
       
       // Convert real string lengths to machine units
       const leftLen = parseFloat(leftStringInput.value) / MM_PER_MACHINE_UNIT;
@@ -536,6 +539,123 @@ PENUP`;
     
     // Load settings when page loads
     loadSettings();
+
+    // Add these utility functions after the existing script tag but before other code
+    function breakLines(moves, maxLength = 30) {
+      const result = [];
+      
+      for (const move of moves) {
+        if (!move.startsWith('G')) {
+          result.push(move);
+          continue;
+        }
+
+        // Parse current move
+        const [x1, y1] = move.match(/X([-\d.]+)\s+Y([-\d.]+)/).slice(1).map(Number);
+        const isG0 = move.startsWith('G0');
+        
+        if (result.length === 0 || !result[result.length-1].startsWith('G')) {
+          result.push(move);
+          continue;
+        }
+
+        // Get previous position
+        const prev = result[result.length-1];
+        const [x0, y0] = prev.match(/X([-\d.]+)\s+Y([-\d.]+)/).slice(1).map(Number);
+        
+        // Calculate distance
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        
+        if (dist <= maxLength) {
+          result.push(move);
+          continue;
+        }
+        
+        // Break into segments
+        const segments = Math.ceil(dist / maxLength);
+        for (let i = 1; i <= segments; i++) {
+          const t = i / segments;
+          const x = x0 + dx * t;
+          const y = y0 + dy * t;
+          result.push(`${isG0 ? 'G0' : 'G1'} X${x.toFixed(3)} Y${y.toFixed(3)}`);
+        }
+      }
+      
+      return result;
+    }
+
+    function cartesianToVPlotter(moves, motorSep = 1000) {
+      return moves.map(move => {
+        if (!move.startsWith('G')) return move;
+        
+        const [x, y] = move.match(/X([-\d.]+)\s+Y([-\d.]+)/).slice(1).map(Number);
+        const isG0 = move.startsWith('G0');
+        
+        // Convert cartesian coordinates to string lengths
+        const motorSep = parseFloat(document.getElementById('motorSep').value);
+        const leftLen = Math.sqrt(x*x + y*y) / MM_PER_MACHINE_UNIT;
+        const rightLen = Math.sqrt((motorSep-x)*(motorSep-x) + y*y) / MM_PER_MACHINE_UNIT;
+        
+        return `${isG0 ? 'G0' : 'G1'} X${leftLen.toFixed(3)} Y${rightLen.toFixed(3)}`;
+      });
+    }
+
+    function svgToGCODE(svgString, scaleX = 1, scaleY = 1, offsetX = 0, offsetY = 0) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(svgString, 'image/svg+xml');
+      const moves = [];
+      let currentPos = null;
+
+      function addMove(x, y, newPath = false) {
+        x = x * scaleX + offsetX;
+        y = y * scaleY + offsetY;
+        
+        if (currentPos && currentPos.x === x && currentPos.y === y) return;
+        
+        if (newPath) {
+          moves.push('PENUP');
+          moves.push(`G0 X${x.toFixed(3)} Y${y.toFixed(3)}`);
+          moves.push('PENDOWN');
+        } else {
+          moves.push(`G1 X${x.toFixed(3)} Y${y.toFixed(3)}`);
+        }
+        currentPos = {x, y};
+      }
+
+      // Handle lines
+      doc.querySelectorAll('line').forEach(line => {
+        addMove(parseFloat(line.getAttribute('x1')), 
+                parseFloat(line.getAttribute('y1')), true);
+        addMove(parseFloat(line.getAttribute('x2')), 
+                parseFloat(line.getAttribute('y2')));
+      });
+
+      // Handle polylines
+      doc.querySelectorAll('polyline').forEach(polyline => {
+        const points = polyline.getAttribute('points').trim().split(/[\s,]+/);
+        for (let i = 0; i < points.length; i += 2) {
+          const x = parseFloat(points[i]);
+          const y = parseFloat(points[i + 1]);
+          addMove(x, y, i === 0);
+        }
+      });
+
+      moves.push('PENUP');
+
+      // Break up long lines and convert to V-plotter coordinates
+      const motorSep = parseFloat(document.getElementById('motorSep').value);
+      const brokenMoves = breakLines(moves);
+      const vplotterMoves = cartesianToVPlotter(brokenMoves, motorSep);
+
+      // Convert moves to GCODE
+      return vplotterMoves.map(move => {
+        if (move === 'PENUP') return 'G1 Z5 ; Pen up';
+        if (move === 'PENDOWN') return 'G1 Z0 ; Pen down';
+        return move;
+      }).join('\n');
+    }
   </script>
 </body>
 </html>
