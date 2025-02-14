@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Hanging Plotter WebUI</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .tabs { display: flex; border-bottom: 1px solid #ccc; margin-bottom: 10px; }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-bottom: none;
+      margin-right: 5px;
+      background: #eee;
+    }
+    .tab.active { background: #fff; font-weight: bold; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    textarea { width: 100%; height: 100px; }
+    #console { border: 1px solid #ccc; height: 150px; overflow-y: scroll; padding: 5px; background: #f9f9f9; }
+    label { margin-right: 10px; }
+    input[type="number"], input[type="text"] { width: 80px; }
+    #imgDropArea, #svgFileDropArea {
+      width: 300px;
+      height: 200px;
+      border: 2px dashed #ccc;
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #777;
+    }
+    .copy-btn {
+      margin-bottom: 5px;
+      padding: 3px 6px;
+      font-size: 0.9em;
+    }
+    .preview-box {
+      border: 1px solid #ccc;
+      padding: 5px;
+      margin-top: 5px;
+    }
+    .preview-box svg {
+      border: 1px solid #ddd;
+      background: #f8f8f8;
+      max-height: 700px;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Hanging Plotter WebUI</h1>
+  
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="img2svg">Img2SVG</div>
+    <div class="tab" data-tab="svg2gcode">SVG2GCODE</div>
+    <div class="tab" data-tab="plot-control">Plot Control</div>
+  </div>
+  
+  <!-- Tab: Img2SVG -->
+  <div id="img2svg" class="tab-content active">
+    <h2>Img2SVG</h2>
+    <p>Drag and drop an image or choose a file:</p>
+    <input type="file" id="imgInput" accept="image/*">
+    <div id="imgDropArea">Drop image here</div>
+    <div class="preview-box">
+      <h3>Image Preview:</h3>
+      <img id="imgPreview" src="" alt="Image preview" style="max-width:100%; max-height:180px;">
+    </div>
+    <br>
+    <button id="convertImgBtn">Convert to SVG (Dummy)</button>
+    <div style="margin-top:10px;">
+      <button class="copy-btn" data-target="svgOutput">Copy SVG</button>
+    </div>
+    <h3>Resulting SVG:</h3>
+    <pre id="svgOutput">&lt;svg&gt;...dummy svg here...</pre>
+    <div id="svgPreview"></div>
+  </div>
+  
+  <!-- Tab: SVG2GCODE -->
+  <div id="svg2gcode" class="tab-content">
+    <h2>SVG2GCODE</h2>
+    <p>You can paste SVG code or upload an SVG file:</p>
+    <textarea id="svgInput" placeholder="Paste SVG code here..." style="height:80px;"></textarea>
+    <br>
+    <input type="file" id="svgFileInput" accept=".svg">
+    <div id="svgFileDropArea" style="margin-top:5px;">Or drop SVG file here</div>
+    
+    <h3>Transform Settings</h3>
+    <label>Scale X:
+      <input type="number" id="scaleX" value="1" step="0.1">
+    </label>
+    <label>Scale Y:
+      <input type="number" id="scaleY" value="1" step="0.1">
+    </label>
+    <label>Offset X:
+      <input type="number" id="offsetX" value="0">
+    </label>
+    <label>Offset Y:
+      <input type="number" id="offsetY" value="0">
+    </label>
+    <br><br>
+    <button id="convertSvgBtn">Convert SVG to GCODE (Dummy)</button>
+    <div style="margin-top:10px;">
+      <button class="copy-btn" data-target="gcodePreview">Copy GCODE</button>
+    </div>
+    <h3>GCODE Preview:</h3>
+    <pre id="gcodePreview">G-code output here...</pre>
+    <div class="preview-box">
+      <h3>Transformed SVG Preview:</h3>
+      <div id="svgTransformPreview"></div>
+    </div>
+  </div>
+  
+  <!-- Tab: Plot Control -->
+  <div id="plot-control" class="tab-content">
+    <h2>Plot Control</h2>
+    <div>
+      <button class="gcode-btn" data-command="G91;G1 X100 Y0;G90">X +100</button>
+      <button class="gcode-btn" data-command="G91;G1 X-100 Y0;G90">X -100</button>
+      <button class="gcode-btn" data-command="G91;G1 X0 Y100;G90">Y +100</button>
+      <button class="gcode-btn" data-command="G91;G1 X0 Y-100;G90">Y -100</button>
+      <button class="gcode-btn" data-command="G92 X0 Y0">Set 0 Position (G92)</button>
+      <button class="gcode-btn" data-command="M114">Read pos (M114)</button>
+    </div>
+    <br>
+    <textarea id="manualGcode" placeholder="Paste GCODE here..."></textarea>
+    <br>
+    <button id="sendManualGcode">Send GCODE</button>
+    <hr>
+    <h3>Serial Connection</h3>
+    <button id="listPorts">List Serial Ports</button>
+    <select id="serialPorts"></select>
+    <button id="connectSerial">Connect</button>
+  </div>
+  
+  <!-- Console Log -->
+  <h3>Console Log</h3>
+  <div id="console"></div>
+  
+  <!-- Settings Section -->
+  <h3>Plotter Settings</h3>
+  <div id="plotterSettings">
+    <label>Motor Separation (mm):
+      <input type="number" id="motorSep" value="1000">
+    </label>
+    <label>Initial Left String Length (mm):
+      <input type="number" id="leftString" value="500">
+    </label>
+    <label>Initial Right String Length (mm):
+      <input type="number" id="rightString" value="500">
+    </label>
+    <button id="saveSettings">Save Settings</button>
+  </div>
+  
+  <script>
+    // --- Tab Switching ---
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.getAttribute('data-tab')).classList.add('active');
+      });
+    });
+    
+    // --- Utility: Copy to Clipboard ---
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-target');
+        const text = document.getElementById(targetId).textContent;
+        navigator.clipboard.writeText(text).then(() => {
+          logMessage(`Copied content from ${targetId}`);
+        });
+      });
+    });
+    
+    // --- Img2SVG Tab ---
+    let currentSVG = '';
+    const imgInput   = document.getElementById('imgInput');
+    const imgDropArea = document.getElementById('imgDropArea');
+    const imgPreview = document.getElementById('imgPreview');
+    const svgOutput  = document.getElementById('svgOutput');
+    const svgPreview = document.getElementById('svgPreview');
+    const convertImgBtn = document.getElementById('convertImgBtn');
+    
+    // Show preview when an image file is selected
+    function previewImage(file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        imgPreview.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+    
+    imgInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        previewImage(e.target.files[0]);
+      }
+    });
+    
+    imgDropArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      imgDropArea.style.background = "#eee";
+    });
+    imgDropArea.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      imgDropArea.style.background = "";
+    });
+    imgDropArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      imgDropArea.style.background = "";
+      if (e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        previewImage(file);
+        // For now, use dummy conversion.
+        currentSVG = dummyImgToSVG();
+        svgOutput.textContent = currentSVG;
+        svgPreview.innerHTML = currentSVG;
+        logMessage("Image dropped, preview updated and dummy SVG generated.");
+      }
+    });
+    
+    // Dummy function that ignores the image and returns a square (single polyline) SVG.
+    function dummyImgToSVG() {
+      return `<svg width="200" height="200" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <polyline points="10,10 90,10 90,90 10,90 10,10" stroke="black" fill="none"/>
+</svg>`;
+    }
+    
+    convertImgBtn.addEventListener('click', () => {
+      // For now, always use the dummy function.
+      currentSVG = dummyImgToSVG();
+      svgOutput.textContent = currentSVG;
+      svgPreview.innerHTML = currentSVG;
+      logMessage("Converted image to dummy SVG.");
+    });
+    
+    // --- SVG2GCODE Tab ---
+    const svgInput    = document.getElementById('svgInput');
+    const svgFileInput = document.getElementById('svgFileInput');
+    const svgFileDropArea = document.getElementById('svgFileDropArea');
+    const scaleXEl = document.getElementById('scaleX');
+    const scaleYEl = document.getElementById('scaleY');
+    const offsetXEl = document.getElementById('offsetX');
+    const offsetYEl = document.getElementById('offsetY');
+    const convertSvgBtn = document.getElementById('convertSvgBtn');
+    const gcodePreview  = document.getElementById('gcodePreview');
+    const svgTransformPreview = document.getElementById('svgTransformPreview');
+    
+    // Update SVG input if a file is uploaded
+    function loadSvgFile(file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        svgInput.value = e.target.result;
+        logMessage("SVG file loaded into text area.");
+        updateSvgTransformPreview();
+      };
+      reader.readAsText(file);
+    }
+    
+    svgFileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        loadSvgFile(e.target.files[0]);
+      }
+    });
+    
+    svgFileDropArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      svgFileDropArea.style.background = "#eee";
+    });
+    svgFileDropArea.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      svgFileDropArea.style.background = "";
+    });
+    svgFileDropArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      svgFileDropArea.style.background = "";
+      if (e.dataTransfer.files.length > 0) {
+        loadSvgFile(e.dataTransfer.files[0]);
+      }
+    });
+    
+    // Dummy function: ignores SVG and transformation parameters, returns fixed G-code.
+    function dummySVGtoGCODE(svg, scaleX, scaleY, offsetX, offsetY) {
+      return `PENUP
+G0 X10 Y10
+PENDOWN
+G1 X90 Y10
+G1 X90 Y90
+G1 X10 Y90
+G1 X10 Y10
+PENUP`;
+    }
+    
+    // Update the SVG transform preview using CSS transform
+    function updateSvgTransformPreview() {
+      let svgCode = svgInput.value || currentSVG;
+      if (!svgCode) {
+        svgTransformPreview.innerHTML = "<p>No SVG available.</p>";
+        return;
+      }
+
+      // Parse the original SVG to get its viewBox
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(svgCode, "image/svg+xml");
+      const originalSvg = svgDoc.querySelector("svg");
+      
+      // Create a new SVG with a larger viewBox to show motors
+      const motorSep = parseFloat(document.getElementById('motorSep').value);
+      const leftString = parseFloat(document.getElementById('leftString').value);
+      const rightString = parseFloat(document.getElementById('rightString').value);
+      
+      // Add 100mm padding around the drawing area
+      const padding = 100;
+      const wrapperSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      wrapperSvg.setAttribute("width", "100%");
+      wrapperSvg.setAttribute("height", "100%");
+      wrapperSvg.setAttribute("viewBox", `${-padding} ${-padding} ${motorSep + 2*padding} ${Math.max(leftString, rightString) + 2*padding}`);
+      
+      // Add motor mount line
+      const motorLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      motorLine.setAttribute("x1", "0");
+      motorLine.setAttribute("y1", "0");
+      motorLine.setAttribute("x2", motorSep.toString());
+      motorLine.setAttribute("y2", "0");
+      motorLine.setAttribute("stroke", "#999");
+      motorLine.setAttribute("stroke-width", "2");
+      wrapperSvg.appendChild(motorLine);
+      
+      // Add motors as circles
+      const motors = [
+        {x: 0, y: 0},  // Left motor
+        {x: motorSep, y: 0}  // Right motor
+      ];
+      
+      motors.forEach(pos => {
+        const motor = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        motor.setAttribute("cx", pos.x.toString());
+        motor.setAttribute("cy", pos.y.toString());
+        motor.setAttribute("r", "10");
+        motor.setAttribute("fill", "#666");
+        wrapperSvg.appendChild(motor);
+      });
+      
+      // Add a red circle at the origin
+      const origin = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      origin.setAttribute("cx", "0");
+      origin.setAttribute("cy", "0");
+      origin.setAttribute("r", "5");
+      origin.setAttribute("fill", "red");
+      wrapperSvg.appendChild(origin);
+
+      // Add another at the start position given the left and right string lengths
+      // Start with area of triangle with sides motorSep, leftString, rightString
+      const area = 0.5 * motorSep * Math.sqrt(leftString*leftString - (motorSep/2)*(motorSep/2));
+      const y = 2*area / motorSep;
+      const x = Math.sqrt(leftString*leftString - y*y);
+      const start = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      start.setAttribute("cx", x.toString());
+      start.setAttribute("cy", y.toString());
+      start.setAttribute("r", "5");
+      start.setAttribute("fill", "blue");
+      wrapperSvg.appendChild(start);
+
+
+      // Add the original SVG content
+      if (originalSvg) {
+        const sX = parseFloat(scaleXEl.value) || 1;
+        const sY = parseFloat(scaleYEl.value) || 1;
+        const oX = parseFloat(offsetXEl.value) || 0;
+        const oY = parseFloat(offsetYEl.value) || 0;
+        
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("transform", `translate(${oX},${oY}) scale(${sX},${sY})`);
+        
+        // Copy all child nodes from original SVG
+        Array.from(originalSvg.childNodes).forEach(node => {
+          g.appendChild(node.cloneNode(true));
+        });
+        
+        wrapperSvg.appendChild(g);
+      }
+      
+      svgTransformPreview.innerHTML = '';
+      svgTransformPreview.appendChild(wrapperSvg);
+    }
+    
+    // Update preview when transformation settings change
+    [scaleXEl, scaleYEl, offsetXEl, offsetYEl].forEach(el => {
+      el.addEventListener('input', updateSvgTransformPreview);
+    });
+    
+    convertSvgBtn.addEventListener('click', () => {
+      const sX = parseFloat(scaleXEl.value) || 1;
+      const sY = parseFloat(scaleYEl.value) || 1;
+      const oX = parseFloat(offsetXEl.value) || 0;
+      const oY = parseFloat(offsetYEl.value) || 0;
+      const svgCode = svgInput.value || currentSVG;
+      const gcode = dummySVGtoGCODE(svgCode, sX, sY, oX, oY);
+      gcodePreview.textContent = gcode;
+      updateSvgTransformPreview();
+      logMessage("Converted SVG to dummy GCODE.");
+    });
+    
+    // --- Plot Control Tab & Web Serial ---
+    let port, writer;
+    let serialBuffer = "";
+    let serialBufferTimer;
+    
+    async function connectSerialPort() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        writer = port.writable.getWriter();
+        logMessage("Serial port connected.");
+        readSerial();
+      } catch (err) {
+        logMessage("Error connecting to serial port: " + err);
+      }
+    }
+    
+    // Read serial data, accumulate in a buffer, and log once there's a pause.
+    async function readSerial() {
+      const reader = port.readable.getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            serialBuffer += new TextDecoder().decode(value);
+            if (serialBufferTimer) clearTimeout(serialBufferTimer);
+            serialBufferTimer = setTimeout(() => {
+              logMessage("Received:\n" + serialBuffer);
+              serialBuffer = "";
+            }, 200);
+          }
+        }
+      } catch (error) {
+        logMessage("Read error: " + error);
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    
+    async function sendGCode(command) {
+      if (!writer) {
+        logMessage("Serial port not connected.");
+        return;
+      }
+      const cmdStr = command.trim() + "\n";
+      const data = new TextEncoder().encode(cmdStr);
+      try {
+        await writer.write(data);
+        logMessage("Sent: " + command);
+      } catch (err) {
+        logMessage("Error sending command: " + err);
+      }
+    }
+    
+    // Manual GCODE sending
+    const sendManualGcode = document.getElementById('sendManualGcode');
+    const manualGcode = document.getElementById('manualGcode');
+    
+    sendManualGcode.addEventListener('click', () => {
+      const commands = manualGcode.value.split('\n').filter(line => line.trim() !== "");
+      commands.forEach(cmd => sendGCode(cmd));
+    });
+    
+    // Preset GCODE buttons
+    document.querySelectorAll('.gcode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const commands = btn.getAttribute('data-command');
+        commands.split(';').forEach(command => sendGCode(command));
+      });
+    });
+    
+    document.getElementById('listPorts').addEventListener('click', () => {
+      logMessage("To list/connect ports, click the Connect button and choose a port.");
+    });
+    document.getElementById('connectSerial').addEventListener('click', connectSerialPort);
+    
+    // --- Console Logging ---
+    function logMessage(msg) {
+      const consoleEl = document.getElementById('console');
+      const time = new Date().toLocaleTimeString();
+      consoleEl.textContent += `[${time}] ${msg}\n`;
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+      console.log(msg);
+    }
+    
+    // --- Plotter Settings ---
+    const motorSepInput = document.getElementById('motorSep');
+    const leftStringInput = document.getElementById('leftString');
+    const rightStringInput = document.getElementById('rightString');
+    const saveSettingsBtn = document.getElementById('saveSettings');
+    
+    // Load settings from localStorage if available
+    function loadSettings() {
+      motorSepInput.value = localStorage.getItem('motorSep') || 1000;
+      leftStringInput.value = localStorage.getItem('leftString') || 500;
+      rightStringInput.value = localStorage.getItem('rightString') || 500;
+    }
+    
+    // Save settings to localStorage and update machine steps
+    saveSettingsBtn.addEventListener('click', async () => {
+      localStorage.setItem('motorSep', motorSepInput.value);
+      localStorage.setItem('leftString', leftStringInput.value);
+      localStorage.setItem('rightString', rightStringInput.value);
+
+      // Calculate conversion between real string length and machine units
+      const PULLEY_DIAMETER = 12; // mm
+      const MACHINE_UNIT_PER_REV = 600; // 100 steps = 100mm
+      const STEPS_PER_REV = 200; // 100 steps = half revolution
+      const MM_PER_REV = Math.PI * PULLEY_DIAMETER;
+      const MM_PER_MACHINE_UNIT = MM_PER_REV / MACHINE_UNIT_PER_REV;
+      
+      // Convert real string lengths to machine units
+      const leftLen = parseFloat(leftStringInput.value) / MM_PER_MACHINE_UNIT;
+      const rightLen = parseFloat(rightStringInput.value) / MM_PER_MACHINE_UNIT;
+
+      // Set current position in machine units
+      if (writer) {
+        try {
+          await sendGCode(`G92 X${leftLen.toFixed(3)} Y${rightLen.toFixed(3)}`);
+          logMessage("Plotter settings saved and position updated.");
+        } catch (err) {
+          logMessage("Error updating machine settings: " + err);
+        }
+      } else {
+        logMessage("Plotter settings saved. Connect to machine to update position.");
+      }
+    });
+    
+    // Load settings when page loads
+    loadSettings();
+  </script>
+</body>
+</html>
